@@ -253,6 +253,15 @@ class PZ_License_System {
             wp_send_json_error(array('message' => 'Security check failed'));
         }
         
+        // Validate required fields
+        if (!isset($_POST['package_type']) || empty($_POST['package_type'])) {
+            wp_send_json_error(array('message' => 'Package type is required'));
+        }
+        
+        if (!isset($_POST['payment_method']) || empty($_POST['payment_method'])) {
+            wp_send_json_error(array('message' => 'Please select a payment method'));
+        }
+        
         $package_type = sanitize_text_field($_POST['package_type']);
         $payment_method = sanitize_text_field($_POST['payment_method']);
         
