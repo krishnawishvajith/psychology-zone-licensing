@@ -1,0 +1,2 @@
+# psychology-zone-licensing
+plugin
