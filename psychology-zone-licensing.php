@@ -1,9 +1,10 @@
 <?php
 /**
  * Plugin Name: Psychology Zone Licensing System
- * Description: Student and School licensing management system with separate dashboards
- * Version: 1.0.0
+ * Description: Student and School licensing management system with WooCommerce integration
+ * Version: 2.0.0
  * Author: Your Name
+ * Requires: WooCommerce
  */
 
 // Prevent direct access
@@ -12,7 +13,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('PZ_LICENSE_VERSION', '1.0.0');
+define('PZ_LICENSE_VERSION', '2.0.0');
 define('PZ_LICENSE_PATH', plugin_dir_path(__FILE__));
 define('PZ_LICENSE_URL', plugin_dir_url(__FILE__));
 
@@ -22,6 +23,8 @@ define('PZ_LICENSE_URL', plugin_dir_url(__FILE__));
 class PZ_License_System {
     
     private static $instance = null;
+    private $school_product_id = null;
+    private $student_product_id = null;
     
     public static function get_instance() {
         if (null === self::$instance) {
@@ -31,6 +34,10 @@ class PZ_License_System {
     }
     
     private function __construct() {
+        // Check if WooCommerce is active
+        add_action('admin_notices', array($this, 'check_woocommerce'));
+        add_action('admin_notices', array($this, 'products_setup_notice'));
+        
         // Initialize plugin
         add_action('init', array($this, 'init'));
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
@@ -38,43 +45,106 @@ class PZ_License_System {
         // Register shortcode for package display
         add_shortcode('pz_license_packages', array($this, 'render_packages'));
         
-        // Register custom post type for licenses
-        add_action('init', array($this, 'register_license_post_type'));
-        
         // Create custom database tables
         register_activation_hook(__FILE__, array($this, 'create_tables'));
         
-        // AJAX handlers
-        add_action('wp_ajax_pz_process_checkout', array($this, 'process_checkout'));
-        add_action('wp_ajax_nopriv_pz_process_checkout', array($this, 'process_checkout'));
+        // Handle manual product creation
+        add_action('admin_init', array($this, 'handle_product_creation'));
         
-        // Add rewrite rules for custom dashboards
-        add_action('init', array($this, 'add_rewrite_rules'));
-        add_filter('query_vars', array($this, 'add_query_vars'));
-        add_action('template_redirect', array($this, 'handle_dashboard_access'));
+        // Handle enroll button clicks
+        add_action('template_redirect', array($this, 'handle_enroll_redirect'));
         
-        // Payment gateway hooks
-        add_action('init', array($this, 'handle_payment_return'));
+        // WooCommerce hooks
+        add_action('woocommerce_thankyou', array($this, 'handle_order_thankyou'), 10, 1);
+        add_action('woocommerce_payment_complete', array($this, 'activate_license_on_payment'), 10, 1);
+        add_action('woocommerce_order_status_completed', array($this, 'activate_license_on_payment'), 10, 1);
+        add_action('woocommerce_order_status_processing', array($this, 'activate_license_on_payment'), 10, 1);
         
-        // WooCommerce order status hooks
-        add_action('woocommerce_order_status_completed', array($this, 'wc_order_completed'), 10, 1);
-        add_action('woocommerce_payment_complete', array($this, 'wc_payment_complete'), 10, 1);
+        // Add license info to order meta
+        add_action('woocommerce_checkout_create_order', array($this, 'add_license_meta_to_order'), 10, 2);
         
-        // Admin notice for rewrite rules flush
-        add_action('admin_notices', array($this, 'activation_notice'));
-        
-        // Admin dashboard notice for school license holders
+        // Admin menu for school license management
+        add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_notices', array($this, 'school_license_dashboard_notice'));
         
-        // Add admin menu for school license management (placeholder for now)
-        add_action('admin_menu', array($this, 'add_admin_menu'));
+        // Custom user roles
+        add_action('init', array($this, 'register_user_roles'));
+    }
+    
+    /**
+     * Check if WooCommerce is active
+     */
+    public function check_woocommerce() {
+        if (!class_exists('WooCommerce')) {
+            ?>
+            <div class="notice notice-error">
+                <p><strong>Psychology Zone Licensing:</strong> This plugin requires WooCommerce to be installed and active.</p>
+            </div>
+            <?php
+        }
+    }
+    
+    /**
+     * Show notice if products are not created
+     */
+    public function products_setup_notice() {
+        if (!class_exists('WooCommerce')) {
+            return;
+        }
+        
+        $school_product_id = get_option('pz_school_product_id');
+        $student_product_id = get_option('pz_student_product_id');
+        
+        $school_exists = $school_product_id && get_post($school_product_id);
+        $student_exists = $student_product_id && get_post($student_product_id);
+        
+        if (!$school_exists || !$student_exists) {
+            ?>
+            <div class="notice notice-warning">
+                <p><strong>Psychology Zone Licensing:</strong> Products need to be created.</p>
+                <p>
+                    <a href="<?php echo admin_url('admin.php?page=pz-setup-products'); ?>" class="button button-primary">
+                        Create License Products Now
+                    </a>
+                </p>
+            </div>
+            <?php
+        }
+    }
+    
+    /**
+     * Handle manual product creation
+     */
+    public function handle_product_creation() {
+        // Only proceed if we're on the setup page and action is set
+        if (!isset($_GET['page']) || $_GET['page'] !== 'pz-setup-products') {
+            return;
+        }
+        
+        // Only create products if the action parameter is set
+        if (!isset($_GET['action']) || $_GET['action'] !== 'create') {
+            return;
+        }
+        
+        if (!current_user_can('manage_options')) {
+            return;
+        }
+        
+        // Create products
+        $this->create_products();
+        
+        // Redirect with success message (remove the action parameter)
+        wp_redirect(admin_url('admin.php?page=pz-setup-products&created=1'));
+        exit;
     }
     
     public function init() {
-        // Register user roles
         $this->register_user_roles();
     }
     
+    /**
+     * Create database tables
+     */
     public function create_tables() {
         global $wpdb;
         $charset_collate = $wpdb->get_charset_collate();
@@ -84,8 +154,8 @@ class PZ_License_System {
         $sql1 = "CREATE TABLE IF NOT EXISTS $table_school (
             id bigint(20) NOT NULL AUTO_INCREMENT,
             user_id bigint(20) NOT NULL,
+            order_id bigint(20) NOT NULL,
             school_name varchar(255) NOT NULL,
-            school_email varchar(255) NOT NULL,
             license_key varchar(100) NOT NULL,
             status varchar(20) DEFAULT 'active',
             start_date datetime DEFAULT CURRENT_TIMESTAMP,
@@ -95,7 +165,8 @@ class PZ_License_System {
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             UNIQUE KEY license_key (license_key),
-            KEY user_id (user_id)
+            KEY user_id (user_id),
+            KEY order_id (order_id)
         ) $charset_collate;";
         
         // Student licenses table
@@ -103,6 +174,7 @@ class PZ_License_System {
         $sql2 = "CREATE TABLE IF NOT EXISTS $table_student (
             id bigint(20) NOT NULL AUTO_INCREMENT,
             user_id bigint(20) NOT NULL,
+            order_id bigint(20) NOT NULL,
             license_key varchar(100) NOT NULL,
             status varchar(20) DEFAULT 'active',
             start_date datetime DEFAULT CURRENT_TIMESTAMP,
@@ -110,10 +182,11 @@ class PZ_License_System {
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             UNIQUE KEY license_key (license_key),
-            KEY user_id (user_id)
+            KEY user_id (user_id),
+            KEY order_id (order_id)
         ) $charset_collate;";
         
-        // School members table (teachers and students under school license)
+        // School members table
         $table_members = $wpdb->prefix . 'pz_school_members';
         $sql3 = "CREATE TABLE IF NOT EXISTS $table_members (
             id bigint(20) NOT NULL AUTO_INCREMENT,
@@ -134,21 +207,78 @@ class PZ_License_System {
         dbDelta($sql2);
         dbDelta($sql3);
         
-        // Set a flag to show admin notice
-        set_transient('pz_activation_notice', true, 30);
-        
-        // Flush rewrite rules
         flush_rewrite_rules();
     }
     
+    /**
+     * Create WooCommerce products on activation
+     */
+    public function create_products() {
+        if (!class_exists('WooCommerce')) {
+            return false;
+        }
+        
+        $created = false;
+        
+        // Check if products already exist
+        $existing_school = get_option('pz_school_product_id');
+        $existing_student = get_option('pz_student_product_id');
+        
+        // Create School License Product
+        if (!$existing_school || !get_post($existing_school)) {
+            $school_product = new WC_Product_Simple();
+            $school_product->set_name('School Licence - 1 Year Subscription');
+            $school_product->set_status('publish');
+            $school_product->set_catalog_visibility('visible');
+            $school_product->set_description('Complete school license with unlimited students and teachers for 1 year.');
+            $school_product->set_short_description('Unlimited students, unlimited teachers, 12 months access');
+            $school_product->set_regular_price('199.00');
+            $school_product->set_manage_stock(false);
+            $school_product->set_sold_individually(true);
+            $school_product->set_virtual(true);
+            
+            $school_id = $school_product->save();
+            
+            if ($school_id) {
+                update_option('pz_school_product_id', $school_id);
+                update_post_meta($school_id, '_pz_license_type', 'school');
+                $created = true;
+            }
+        }
+        
+        // Create Student Package Product
+        if (!$existing_student || !get_post($existing_student)) {
+            $student_product = new WC_Product_Simple();
+            $student_product->set_name('Student Package - 1 Year Subscription');
+            $student_product->set_status('publish');
+            $student_product->set_catalog_visibility('visible');
+            $student_product->set_description('Individual student package with full access to all materials for 1 year.');
+            $student_product->set_short_description('Access to all study materials, 12 months access');
+            $student_product->set_regular_price('49.99');
+            $student_product->set_manage_stock(false);
+            $student_product->set_sold_individually(true);
+            $student_product->set_virtual(true);
+            
+            $student_id = $student_product->save();
+            
+            if ($student_id) {
+                update_option('pz_student_product_id', $student_id);
+                update_post_meta($student_id, '_pz_license_type', 'student');
+                $created = true;
+            }
+        }
+        
+        return $created;
+    }
+    
+    /**
+     * Register user roles
+     */
     public function register_user_roles() {
-        // Add custom capabilities to existing roles or create new ones
         if (!get_role('pz_school_admin')) {
             add_role('pz_school_admin', 'School Administrator', array(
                 'read' => true,
-                'pz_manage_school' => true,
-                'pz_add_teachers' => true,
-                'pz_add_students' => true,
+                'manage_school_license' => true,
             ));
         }
         
@@ -156,7 +286,6 @@ class PZ_License_System {
             add_role('pz_teacher', 'Teacher', array(
                 'read' => true,
                 'pz_access_materials' => true,
-                'pz_view_students' => true,
             ));
         }
         
@@ -168,10 +297,9 @@ class PZ_License_System {
         }
     }
     
-    public function register_license_post_type() {
-        // This can be used for storing license-related content if needed
-    }
-    
+    /**
+     * Enqueue scripts
+     */
     public function enqueue_scripts() {
         wp_enqueue_style('pz-license-styles', PZ_LICENSE_URL . 'assets/css/styles.css', array(), PZ_LICENSE_VERSION);
         wp_enqueue_script('pz-license-scripts', PZ_LICENSE_URL . 'assets/js/scripts.js', array('jquery'), PZ_LICENSE_VERSION, true);
@@ -179,574 +307,315 @@ class PZ_License_System {
         wp_localize_script('pz-license-scripts', 'pzLicense', array(
             'ajaxurl' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('pz_license_nonce'),
-            'checkout_url' => home_url('/pz-checkout/'),
+            'my_account_url' => wc_get_page_permalink('myaccount'),
+            'is_logged_in' => is_user_logged_in(),
         ));
     }
     
-    public function add_rewrite_rules() {
-        add_rewrite_rule('^pz-checkout/?$', 'index.php?pz_page=checkout', 'top');
-        add_rewrite_rule('^school-dashboard/?$', 'index.php?pz_page=school_dashboard', 'top');
-        add_rewrite_rule('^student-dashboard/?$', 'index.php?pz_page=student_dashboard', 'top');
-        add_rewrite_rule('^teacher-dashboard/?$', 'index.php?pz_page=teacher_dashboard', 'top');
-    }
-    
-    public function add_query_vars($vars) {
-        $vars[] = 'pz_page';
-        $vars[] = 'package';
-        return $vars;
-    }
-    
-    public function handle_dashboard_access() {
-        $pz_page = get_query_var('pz_page');
+    /**
+     * Handle enroll button redirects
+     */
+    public function handle_enroll_redirect() {
+        // Check if the pz_enroll parameter exists
+        if (!isset($_GET['pz_enroll'])) {
+            return;
+        }
         
-        if ($pz_page === 'checkout') {
-            include PZ_LICENSE_PATH . 'templates/checkout.php';
+        // Check if WooCommerce is active
+        if (!class_exists('WooCommerce')) {
+            wp_die('WooCommerce is required for this functionality.');
+        }
+        
+        $package = sanitize_text_field($_GET['pz_enroll']);
+        
+        // Validate package type
+        if (!in_array($package, array('school', 'student'))) {
+            wp_die('Invalid package type.');
+        }
+        
+        // Get product IDs
+        $school_product_id = get_option('pz_school_product_id');
+        $student_product_id = get_option('pz_student_product_id');
+        
+        $product_id = ($package === 'school') ? $school_product_id : $student_product_id;
+        
+        if (!$product_id || !get_post($product_id)) {
+            wp_die('Product not found. Please contact administrator. Product ID: ' . $product_id);
+        }
+        
+        // Check if user is logged in
+        if (!is_user_logged_in()) {
+            // Store intended action in session
+            if (WC()->session) {
+                WC()->session->set('pz_enroll_package', $package);
+                WC()->session->set('pz_enroll_product_id', $product_id);
+            }
+            
+            // Redirect to my account page (login/register)
+            $my_account_url = wc_get_page_permalink('myaccount');
+            wp_safe_redirect($my_account_url);
             exit;
-        } elseif ($pz_page === 'school_dashboard') {
-            include PZ_LICENSE_PATH . 'templates/school-dashboard.php';
-            exit;
-        } elseif ($pz_page === 'student_dashboard') {
-            include PZ_LICENSE_PATH . 'templates/student-dashboard.php';
-            exit;
-        } elseif ($pz_page === 'teacher_dashboard') {
-            include PZ_LICENSE_PATH . 'templates/teacher-dashboard.php';
-            exit;
+        }
+        
+        // User is logged in - add product to cart and redirect to checkout
+        WC()->cart->empty_cart();
+        WC()->cart->add_to_cart($product_id);
+        
+        // Store package type in session
+        if (WC()->session) {
+            if ($package === 'school') {
+                WC()->session->set('pz_package_type', 'school');
+            } else {
+                WC()->session->set('pz_package_type', 'student');
+            }
+        }
+        
+        wp_safe_redirect(wc_get_checkout_url());
+        exit;
+    }
+    
+    /**
+     * After user logs in via My Account, check if they need to be redirected to checkout
+     */
+    public function __construct_additional_hooks() {
+        add_action('woocommerce_login_redirect', array($this, 'redirect_after_login'), 10, 2);
+    }
+    
+    public function redirect_after_login($redirect, $user) {
+        // Check if there's a pending enrollment
+        $package = WC()->session->get('pz_enroll_package');
+        $product_id = WC()->session->get('pz_enroll_product_id');
+        
+        if ($package && $product_id) {
+            // Clear the session
+            WC()->session->set('pz_enroll_package', null);
+            WC()->session->set('pz_enroll_product_id', null);
+            
+            // Add to cart and redirect to checkout
+            WC()->cart->empty_cart();
+            WC()->cart->add_to_cart($product_id);
+            
+            if ($package === 'school') {
+                WC()->session->set('pz_package_type', 'school');
+            } else {
+                WC()->session->set('pz_package_type', 'student');
+            }
+            
+            return wc_get_checkout_url();
+        }
+        
+        return $redirect;
+    }
+    
+    /**
+     * Add license metadata to order
+     */
+    public function add_license_meta_to_order($order, $data) {
+        $package_type = WC()->session->get('pz_package_type');
+        
+        if ($package_type) {
+            $order->update_meta_data('_pz_package_type', $package_type);
+            
+            // Generate license key
+            $license_key = $this->generate_license_key($package_type === 'school' ? 'SCH' : 'STU');
+            $order->update_meta_data('_pz_license_key', $license_key);
+            
+            // For school packages, we'll ask for school name in checkout
+            if ($package_type === 'school') {
+                // We can add a custom field to checkout for school name
+                // For now, we'll use billing company name
+                $school_name = !empty($data['billing_company']) ? $data['billing_company'] : 'School';
+                $order->update_meta_data('_pz_school_name', $school_name);
+            }
         }
     }
     
     /**
-     * Render package selection interface
+     * Activate license when payment is complete
+     */
+    public function activate_license_on_payment($order_id) {
+        $order = wc_get_order($order_id);
+        if (!$order) return;
+        
+        // Check if license already activated
+        $license_activated = $order->get_meta('_pz_license_activated');
+        if ($license_activated) return;
+        
+        $package_type = $order->get_meta('_pz_package_type');
+        $license_key = $order->get_meta('_pz_license_key');
+        $user_id = $order->get_customer_id();
+        
+        if (!$package_type || !$license_key || !$user_id) return;
+        
+        global $wpdb;
+        
+        $end_date = date('Y-m-d H:i:s', strtotime('+1 year'));
+        
+        if ($package_type === 'school') {
+            $school_name = $order->get_meta('_pz_school_name');
+            if (!$school_name) {
+                $school_name = $order->get_billing_company();
+            }
+            if (!$school_name) {
+                $school_name = 'School License';
+            }
+            
+            // Create school license
+            $wpdb->insert(
+                $wpdb->prefix . 'pz_school_licenses',
+                array(
+                    'user_id' => $user_id,
+                    'order_id' => $order_id,
+                    'school_name' => $school_name,
+                    'license_key' => $license_key,
+                    'status' => 'active',
+                    'end_date' => $end_date,
+                    'start_date' => current_time('mysql')
+                ),
+                array('%d', '%d', '%s', '%s', '%s', '%s', '%s')
+            );
+            
+            $license_id = $wpdb->insert_id;
+            
+            // Update user meta
+            update_user_meta($user_id, 'has_school_license', true);
+            update_user_meta($user_id, 'active_school_license_id', $license_id);
+            
+            // Grant capabilities
+            $user = new WP_User($user_id);
+            $user->add_cap('manage_school_license');
+            
+        } else {
+            // Create student license
+            $wpdb->insert(
+                $wpdb->prefix . 'pz_student_licenses',
+                array(
+                    'user_id' => $user_id,
+                    'order_id' => $order_id,
+                    'license_key' => $license_key,
+                    'status' => 'active',
+                    'end_date' => $end_date,
+                    'start_date' => current_time('mysql')
+                ),
+                array('%d', '%d', '%s', '%s', '%s', '%s')
+            );
+            
+            // Update user role to student
+            $user = new WP_User($user_id);
+            $user->set_role('pz_student');
+        }
+        
+        // Mark license as activated
+        $order->update_meta_data('_pz_license_activated', true);
+        $order->save();
+        
+        // Send welcome email
+        $this->send_welcome_email($user_id, $package_type, $license_key);
+        
+        // Clear session
+        WC()->session->set('pz_package_type', null);
+    }
+    
+    /**
+     * Handle thank you page
+     */
+    public function handle_order_thankyou($order_id) {
+        $order = wc_get_order($order_id);
+        if (!$order) return;
+        
+        $package_type = $order->get_meta('_pz_package_type');
+        $license_key = $order->get_meta('_pz_license_key');
+        
+        if ($package_type && $license_key) {
+            ?>
+            <div class="pz-thankyou-message" style="background: #f0f7ff; border: 2px solid #4A90E2; border-radius: 8px; padding: 30px; margin: 30px 0;">
+                <h2 style="color: #4A90E2; margin-top: 0;">🎉 Welcome to Psychology Zone!</h2>
+                <p style="font-size: 18px; margin: 20px 0;">
+                    Your <?php echo $package_type === 'school' ? 'School Licence' : 'Student Package'; ?> has been activated!
+                </p>
+                <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                    <strong>Your License Key:</strong><br>
+                    <code style="font-size: 20px; color: #E94B3C; background: #f5f5f5; padding: 10px 20px; border-radius: 4px; display: inline-block; margin-top: 10px;">
+                        <?php echo esc_html($license_key); ?>
+                    </code>
+                </div>
+                <p style="margin: 20px 0;">
+                    A confirmation email has been sent to your email address with all the details.
+                </p>
+                <div style="margin-top: 30px;">
+                    <a href="<?php echo wc_get_page_permalink('myaccount'); ?>" 
+                       style="display: inline-block; background: #4A90E2; color: white; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 18px;">
+                        Go to My Account Dashboard
+                    </a>
+                </div>
+            </div>
+            <?php
+        }
+    }
+    
+    /**
+     * Generate license key
+     */
+    private function generate_license_key($prefix = 'PZ') {
+        return $prefix . '-' . strtoupper(wp_generate_password(16, false, false));
+    }
+    
+    /**
+     * Send welcome email
+     */
+    private function send_welcome_email($user_id, $package_type, $license_key) {
+        $user = get_user_by('id', $user_id);
+        if (!$user) return;
+        
+        $subject = 'Welcome to Psychology Zone - Your License is Active!';
+        $dashboard_url = wc_get_page_permalink('myaccount');
+        
+        if ($package_type === 'school') {
+            $message = "
+                <h2>🎉 Welcome to Psychology Zone!</h2>
+                <p>Your School Licence has been activated successfully.</p>
+                <div style='background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;'>
+                    <p><strong>License Key:</strong> <code>{$license_key}</code></p>
+                    <p><strong>Valid Until:</strong> " . date('F j, Y', strtotime('+1 year')) . "</p>
+                </div>
+                <p>You can now manage your school license from your account dashboard.</p>
+                <p><a href='{$dashboard_url}' style='background: #E94B3C; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;'>Access Your Dashboard</a></p>
+            ";
+        } else {
+            $message = "
+                <h2>🎉 Welcome to Psychology Zone!</h2>
+                <p>Your Student Package has been activated successfully.</p>
+                <div style='background: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;'>
+                    <p><strong>License Key:</strong> <code>{$license_key}</code></p>
+                    <p><strong>Valid Until:</strong> " . date('F j, Y', strtotime('+1 year')) . "</p>
+                </div>
+                <p>You now have full access to all study materials and resources.</p>
+                <p><a href='{$dashboard_url}' style='background: #4A90E2; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;'>Access Your Dashboard</a></p>
+            ";
+        }
+        
+        $headers = array('Content-Type: text/html; charset=UTF-8');
+        wp_mail($user->user_email, $subject, $message, $headers);
+    }
+    
+    /**
+     * Render packages shortcode
      */
     public function render_packages($atts) {
         ob_start();
+        
+        // Get product IDs
+        $school_product_id = get_option('pz_school_product_id');
+        $student_product_id = get_option('pz_student_product_id');
+        
         include PZ_LICENSE_PATH . 'templates/packages.php';
         return ob_get_clean();
     }
     
     /**
-     * Generate unique license key
+     * Get user's school license
      */
-    public function generate_license_key($prefix = 'PZ') {
-        return $prefix . '-' . strtoupper(wp_generate_password(16, false, false));
-    }
-    
-    /**
-     * Admin notice for activation
-     */
-    public function activation_notice() {
-        if (get_transient('pz_activation_notice')) {
-            ?>
-            <div class="notice notice-success is-dismissible">
-                <p><strong>Psychology Zone Licensing:</strong> Plugin activated successfully! Please go to <strong>Settings → Permalinks</strong> and click "Save Changes" to ensure custom URLs work correctly.</p>
-            </div>
-            <?php
-            delete_transient('pz_activation_notice');
-        }
-    }
-    
-    /**
-     * Process checkout - Main AJAX handler
-     */
-    public function process_checkout() {
-        // Verify nonce
-        if (!isset($_POST['pz_nonce']) || !wp_verify_nonce($_POST['pz_nonce'], 'pz_checkout')) {
-            wp_send_json_error(array('message' => 'Security check failed'));
-        }
-        
-        // Validate required fields
-        if (!isset($_POST['package_type']) || empty($_POST['package_type'])) {
-            wp_send_json_error(array('message' => 'Package type is required'));
-        }
-        
-        if (!isset($_POST['payment_method']) || empty($_POST['payment_method'])) {
-            wp_send_json_error(array('message' => 'Please select a payment method'));
-        }
-        
-        $package_type = sanitize_text_field($_POST['package_type']);
-        $payment_method = sanitize_text_field($_POST['payment_method']);
-        
-        if ($package_type === 'school') {
-            $this->process_school_checkout($_POST, $payment_method);
-        } else {
-            $this->process_student_checkout($_POST, $payment_method);
-        }
-    }
-    
-    /**
-     * Process school checkout
-     */
-    private function process_school_checkout($data, $payment_method) {
-        global $wpdb;
-        
-        // Determine if creating new account or using existing
-        $active_tab = isset($data['active_tab']) ? $data['active_tab'] : 'new-account';
-        $is_new_account = ($active_tab === 'new-account');
-        
-        if ($is_new_account) {
-            // Creating NEW account
-            $school_name = sanitize_text_field($data['school_name']);
-            $school_email = sanitize_email($data['school_email']);
-            $password = $data['school_password'];
-            $contact_person = sanitize_text_field($data['contact_person']);
-            $phone = isset($data['phone']) ? sanitize_text_field($data['phone']) : '';
-            
-            // Validate email
-            if (!is_email($school_email)) {
-                wp_send_json_error(array('message' => 'Please enter a valid email address.'));
-            }
-            
-            // Check if email already exists
-            if (email_exists($school_email)) {
-                wp_send_json_error(array('message' => 'This email is already registered. Please use the "I Have an Account" tab or use a different email.'));
-            }
-            
-            // Validate password
-            if (strlen($password) < 8) {
-                wp_send_json_error(array('message' => 'Password must be at least 8 characters long.'));
-            }
-            
-            // Create user account as subscriber first
-            $user_id = wp_create_user($school_email, $password, $school_email);
-            
-            if (is_wp_error($user_id)) {
-                wp_send_json_error(array('message' => $user_id->get_error_message()));
-            }
-            
-            // Update user meta and set as subscriber
-            wp_update_user(array(
-                'ID' => $user_id,
-                'display_name' => $contact_person,
-                'first_name' => $contact_person,
-                'role' => 'subscriber'
-            ));
-            
-            // Add phone to user meta if provided
-            if ($phone) {
-                update_user_meta($user_id, 'phone', $phone);
-            }
-            
-            // Store school-specific meta
-            update_user_meta($user_id, 'is_school_owner', true);
-            
-        } else {
-            // Using EXISTING account
-            $existing_email = sanitize_email($data['existing_email']);
-            $existing_password = $data['existing_password'];
-            $school_name = sanitize_text_field($data['assign_school_name']);
-            
-            // Validate inputs
-            if (empty($existing_email) || empty($existing_password)) {
-                wp_send_json_error(array('message' => 'Please enter your email and password.'));
-            }
-            
-            if (empty($school_name)) {
-                wp_send_json_error(array('message' => 'Please enter the school name for this licence.'));
-            }
-            
-            // Authenticate user
-            $user = wp_authenticate($existing_email, $existing_password);
-            
-            if (is_wp_error($user)) {
-                wp_send_json_error(array('message' => 'Invalid email or password. Please try again.'));
-            }
-            
-            $user_id = $user->ID;
-            $school_email = $user->user_email;
-            
-            // Mark this user as school owner
-            update_user_meta($user_id, 'is_school_owner', true);
-        }
-        
-        // Generate license key
-        $license_key = $this->generate_license_key('SCH');
-        
-        // Create pending school license
-        $end_date = date('Y-m-d H:i:s', strtotime('+1 year'));
-        
-        $insert_result = $wpdb->insert(
-            $wpdb->prefix . 'pz_school_licenses',
-            array(
-                'user_id' => $user_id,
-                'school_name' => $school_name,
-                'school_email' => $school_email,
-                'license_key' => $license_key,
-                'status' => 'pending',
-                'end_date' => $end_date,
-                'start_date' => current_time('mysql')
-            ),
-            array('%d', '%s', '%s', '%s', '%s', '%s', '%s')
-        );
-        
-        if (!$insert_result) {
-            wp_send_json_error(array('message' => 'Failed to create license. Please try again.'));
-        }
-        
-        $license_id = $wpdb->insert_id;
-        
-        // Store license info in session for payment processing
-        if (!session_id()) {
-            session_start();
-        }
-        $_SESSION['pz_pending_license'] = array(
-            'license_id' => $license_id,
-            'user_id' => $user_id,
-            'type' => 'school',
-            'amount' => 199.00,
-            'school_name' => $school_name,
-            'is_new_user' => $is_new_account
-        );
-        
-        // Create payment URL
-        $payment_url = $this->create_payment_url($payment_method, 'school', $license_id, $user_id);
-        
-        wp_send_json_success(array(
-            'payment_url' => $payment_url,
-            'message' => ($is_new_account ? 'Account created successfully. ' : 'Account verified. ') . 'Redirecting to payment...'
-        ));
-    }
-    
-    /**
-     * Process student checkout
-     */
-    private function process_student_checkout($data, $payment_method) {
-        global $wpdb;
-        
-        $is_new_account = !empty($data['student_email']);
-        
-        if ($is_new_account) {
-            $student_email = sanitize_email($data['student_email']);
-            $password = $data['student_password'];
-            $first_name = sanitize_text_field($data['first_name']);
-            $last_name = sanitize_text_field($data['last_name']);
-            
-            if (email_exists($student_email)) {
-                wp_send_json_error(array('message' => 'This email is already registered. Please use the "I Have an Account" tab.'));
-            }
-            
-            $user_id = wp_create_user($student_email, $password, $student_email);
-            
-            if (is_wp_error($user_id)) {
-                wp_send_json_error(array('message' => $user_id->get_error_message()));
-            }
-            
-            wp_update_user(array(
-                'ID' => $user_id,
-                'first_name' => $first_name,
-                'last_name' => $last_name,
-                'display_name' => $first_name . ' ' . $last_name
-            ));
-            
-            $user = new WP_User($user_id);
-            $user->set_role('pz_student');
-            
-        } else {
-            $existing_email = sanitize_email($data['existing_email']);
-            $existing_password = $data['existing_password'];
-            
-            $user = wp_authenticate($existing_email, $existing_password);
-            
-            if (is_wp_error($user)) {
-                wp_send_json_error(array('message' => 'Invalid email or password'));
-            }
-            
-            $user_id = $user->ID;
-        }
-        
-        $license_key = $this->generate_license_key('STU');
-        $end_date = date('Y-m-d H:i:s', strtotime('+1 year'));
-        
-        $wpdb->insert(
-            $wpdb->prefix . 'pz_student_licenses',
-            array(
-                'user_id' => $user_id,
-                'license_key' => $license_key,
-                'status' => 'pending',
-                'end_date' => $end_date
-            ),
-            array('%d', '%s', '%s', '%s')
-        );
-        
-        $license_id = $wpdb->insert_id;
-        
-        if (!session_id()) {
-            session_start();
-        }
-        $_SESSION['pz_pending_license'] = array(
-            'license_id' => $license_id,
-            'user_id' => $user_id,
-            'type' => 'student',
-            'amount' => 49.99
-        );
-        
-        $payment_url = $this->create_payment_url($payment_method, 'student', $license_id);
-        
-        wp_send_json_success(array(
-            'payment_url' => $payment_url,
-            'message' => 'Account created successfully. Redirecting to payment...'
-        ));
-    }
-    
-    /**
-     * Create payment URL using WooCommerce payment gateways
-     */
-    private function create_payment_url($payment_method, $package_type, $license_id, $user_id) {
-        // Check if WooCommerce is active
-        if (!class_exists('WooCommerce')) {
-            // Fallback: create simple payment page
-            return home_url('/pz-payment/?method=' . $payment_method . '&type=' . $package_type . '&license=' . $license_id);
-        }
-        
-        // Create a WooCommerce order
-        $order = wc_create_order(array('customer_id' => $user_id));
-        
-        // Add product to order
-        $product_name = ($package_type === 'school') ? 'School Licence' : 'Student Package';
-        $amount = ($package_type === 'school') ? 199.00 : 49.99;
-        
-        // Create a simple product item for the order
-        $item = new WC_Order_Item_Product();
-        $item->set_name($product_name);
-        $item->set_quantity(1);
-        $item->set_subtotal($amount);
-        $item->set_total($amount);
-        $order->add_item($item);
-        
-        // Set order meta
-        $order->update_meta_data('_pz_license_id', $license_id);
-        $order->update_meta_data('_pz_package_type', $package_type);
-        $order->update_meta_data('_pz_user_id', $user_id);
-        
-        // Set billing details
-        $user = get_user_by('id', $user_id);
-        if ($user) {
-            $order->set_billing_email($user->user_email);
-            $order->set_billing_first_name($user->first_name);
-            $order->set_billing_last_name($user->last_name);
-        }
-        
-        // Calculate totals
-        $order->calculate_totals();
-        
-        // Set payment method
-        $order->set_payment_method($payment_method);
-        
-        // Save order
-        $order->save();
-        
-        // Return checkout payment URL
-        return $order->get_checkout_payment_url();
-    }
-    
-    /**
-     * Handle payment return
-     */
-    public function handle_payment_return() {
-        // Handle WooCommerce payment return
-        if (isset($_GET['key']) && isset($_GET['order-received'])) {
-            $order_key = sanitize_text_field($_GET['key']);
-            $order_id = absint($_GET['order-received']);
-            
-            $order = wc_get_order($order_id);
-            
-            if ($order && $order->get_order_key() === $order_key) {
-                $package_type = $order->get_meta('_pz_package_type');
-                $user_id = $order->get_meta('_pz_user_id');
-                
-                // Log user in if not already
-                if ($user_id && !is_user_logged_in()) {
-                    wp_set_auth_cookie($user_id);
-                    wp_set_current_user($user_id);
-                }
-                
-                // Redirect to dashboard after 2 seconds
-                if ($package_type === 'school') {
-                    add_action('wp_footer', function() {
-                        ?>
-                        <script>
-                        setTimeout(function() {
-                            window.location.href = '<?php echo home_url('/wp-admin/'); ?>';
-                        }, 2000);
-                        </script>
-                        <?php
-                    });
-                }
-            }
-        }
-        
-        // Legacy payment complete handler
-        if (isset($_GET['pz_payment_complete']) && isset($_GET['order_id'])) {
-            $order_id = absint($_GET['order_id']);
-            $order = wc_get_order($order_id);
-            
-            if ($order && $order->is_paid()) {
-                $license_id = $order->get_meta('_pz_license_id');
-                $package_type = $order->get_meta('_pz_package_type');
-                $user_id = $order->get_meta('_pz_user_id');
-                
-                // Activate license
-                $this->activate_license($license_id, $package_type);
-                
-                // Log user in and redirect to dashboard
-                if ($user_id) {
-                    wp_set_auth_cookie($user_id);
-                    wp_set_current_user($user_id);
-                    
-                    // Redirect to WordPress admin dashboard
-                    wp_redirect(home_url('/wp-admin/'));
-                    exit;
-                }
-            }
-        }
-    }
-    
-    /**
-     * Activate license after payment
-     */
-    private function activate_license($license_id, $package_type) {
-        global $wpdb;
-        
-        if ($package_type === 'school') {
-            $wpdb->update(
-                $wpdb->prefix . 'pz_school_licenses',
-                array('status' => 'active'),
-                array('id' => $license_id),
-                array('%s'),
-                array('%d')
-            );
-        } else {
-            $wpdb->update(
-                $wpdb->prefix . 'pz_student_licenses',
-                array('status' => 'active'),
-                array('id' => $license_id),
-                array('%s'),
-                array('%d')
-            );
-        }
-    }
-    
-    /**
-     * WooCommerce payment complete hook
-     */
-    public function wc_payment_complete($order_id) {
-        $order = wc_get_order($order_id);
-        if (!$order) return;
-        
-        $license_id = $order->get_meta('_pz_license_id');
-        $package_type = $order->get_meta('_pz_package_type');
-        $user_id = $order->get_meta('_pz_user_id');
-        
-        if ($license_id && $package_type && $user_id) {
-            // Activate the license
-            $this->activate_license($license_id, $package_type);
-            
-            // Grant school admin capabilities to the user
-            if ($package_type === 'school') {
-                $this->grant_school_admin_access($user_id, $license_id);
-            }
-            
-            // Send welcome email
-            $this->send_welcome_email($license_id, $package_type);
-            
-            // Log user in if not already logged in
-            if (!is_user_logged_in()) {
-                wp_set_auth_cookie($user_id);
-                wp_set_current_user($user_id);
-            }
-        }
-    }
-    
-    /**
-     * Grant school admin access to user
-     */
-    private function grant_school_admin_access($user_id, $license_id) {
-        // Get user
-        $user = get_user_by('id', $user_id);
-        if (!$user) return;
-        
-        // Add school admin capability to subscriber role
-        $user->add_cap('manage_school_license');
-        $user->add_cap('add_school_teachers');
-        $user->add_cap('add_school_students');
-        
-        // Store the license ID in user meta for easy access
-        update_user_meta($user_id, 'active_school_license_id', $license_id);
-        update_user_meta($user_id, 'has_school_license', true);
-    }
-    
-    /**
-     * WooCommerce order completed hook
-     */
-    public function wc_order_completed($order_id) {
-        $this->wc_payment_complete($order_id);
-    }
-    
-    /**
-     * Send welcome email after activation
-     */
-    private function send_welcome_email($license_id, $package_type) {
-        global $wpdb;
-        
-        if ($package_type === 'school') {
-            $license = $wpdb->get_row($wpdb->prepare(
-                "SELECT * FROM {$wpdb->prefix}pz_school_licenses WHERE id = %d",
-                $license_id
-            ));
-            
-            if ($license) {
-                $user = get_user_by('id', $license->user_id);
-                $dashboard_url = home_url('/school-dashboard/');
-                
-                $subject = 'Welcome to Psychology Zone - School Licence Activated';
-                $message = "
-                    <h2>Welcome to Psychology Zone!</h2>
-                    <p>Your School Licence has been activated successfully.</p>
-                    <p><strong>School Name:</strong> {$license->school_name}</p>
-                    <p><strong>License Key:</strong> {$license->license_key}</p>
-                    <p><strong>Login Email:</strong> {$license->school_email}</p>
-                    <p><strong>Valid Until:</strong> " . date('F j, Y', strtotime($license->end_date)) . "</p>
-                    <p><a href='{$dashboard_url}' style='background: #E94B3C; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;'>Access Your Dashboard</a></p>
-                    <p>You can now add teachers and students to your school.</p>
-                ";
-                
-                $this->send_html_email($license->school_email, $subject, $message);
-            }
-        } else {
-            $license = $wpdb->get_row($wpdb->prepare(
-                "SELECT * FROM {$wpdb->prefix}pz_student_licenses WHERE id = %d",
-                $license_id
-            ));
-            
-            if ($license) {
-                $user = get_user_by('id', $license->user_id);
-                $dashboard_url = home_url('/student-dashboard/');
-                
-                $subject = 'Welcome to Psychology Zone - Student Package Activated';
-                $message = "
-                    <h2>Welcome to Psychology Zone!</h2>
-                    <p>Your Student Package has been activated successfully.</p>
-                    <p><strong>License Key:</strong> {$license->license_key}</p>
-                    <p><strong>Valid Until:</strong> " . date('F j, Y', strtotime($license->end_date)) . "</p>
-                    <p><a href='{$dashboard_url}' style='background: #4A90E2; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;'>Access Your Dashboard</a></p>
-                    <p>You now have access to all study materials and resources.</p>
-                ";
-                
-                $this->send_html_email($user->user_email, $subject, $message);
-            }
-        }
-    }
-    
-    /**
-     * Send HTML email
-     */
-    private function send_html_email($to, $subject, $message) {
-        $headers = array('Content-Type: text/html; charset=UTF-8');
-        wp_mail($to, $subject, $message, $headers);
-    }
-    
-    /**
-     * Check if user has active school license
-     */
-    public function user_has_school_license($user_id = null) {
+    public function get_user_school_license($user_id = null) {
         if (!$user_id) {
             $user_id = get_current_user_id();
         }
@@ -769,60 +638,24 @@ class PZ_License_System {
     }
     
     /**
-     * Get user's school license info
-     */
-    public function get_user_school_license($user_id = null) {
-        return $this->user_has_school_license($user_id);
-    }
-    
-    /**
-     * School license dashboard notice in admin
-     */
-    public function school_license_dashboard_notice() {
-        $user_id = get_current_user_id();
-        $school_license = $this->get_user_school_license($user_id);
-        
-        if ($school_license && isset($_GET['school_license_active'])) {
-            $end_date = date('F j, Y', strtotime($school_license->end_date));
-            ?>
-            <div class="notice notice-success is-dismissible" style="border-left-color: #E94B3C;">
-                <h2 style="margin: 15px 0 10px 0;">🎉 Welcome to Psychology Zone School License!</h2>
-                <p style="font-size: 16px; margin: 10px 0;">
-                    <strong>School:</strong> <?php echo esc_html($school_license->school_name); ?><br>
-                    <strong>License Key:</strong> <code><?php echo esc_html($school_license->license_key); ?></code><br>
-                    <strong>Valid Until:</strong> <?php echo esc_html($end_date); ?>
-                </p>
-                <p style="margin: 15px 0;">
-                    You can now manage your school, add teachers and students from the <strong>School License</strong> menu.
-                </p>
-            </div>
-            <?php
-        }
-        
-        // Show regular license info on dashboard
-        if ($school_license && is_admin() && get_current_screen()->id === 'dashboard') {
-            $days_remaining = floor((strtotime($school_license->end_date) - time()) / (60 * 60 * 24));
-            $status_color = $days_remaining < 30 ? '#f0ad4e' : '#5cb85c';
-            ?>
-            <div class="notice notice-info" style="border-left-color: <?php echo $status_color; ?>;">
-                <h3 style="margin: 10px 0;">School License Status</h3>
-                <p>
-                    <strong><?php echo esc_html($school_license->school_name); ?></strong><br>
-                    License expires in <strong><?php echo $days_remaining; ?> days</strong>
-                </p>
-            </div>
-            <?php
-        }
-    }
-    
-    /**
-     * Add admin menu for school license management
+     * Admin menu for school license
      */
     public function add_admin_menu() {
+        // Setup products page
+        add_menu_page(
+            'PZ License Setup',
+            'PZ License Setup',
+            'manage_options',
+            'pz-setup-products',
+            array($this, 'render_setup_page'),
+            'dashicons-admin-plugins',
+            100
+        );
+        
+        // School license menu (only for users with active license)
         $user_id = get_current_user_id();
         $school_license = $this->get_user_school_license($user_id);
         
-        // Only show menu if user has active school license
         if ($school_license) {
             add_menu_page(
                 'School License',
@@ -833,39 +666,121 @@ class PZ_License_System {
                 'dashicons-welcome-learn-more',
                 30
             );
-            
-            // Submenu items (placeholders for now)
-            add_submenu_page(
-                'pz-school-license',
-                'Dashboard',
-                'Dashboard',
-                'read',
-                'pz-school-license',
-                array($this, 'render_school_admin_page')
-            );
-            
-            add_submenu_page(
-                'pz-school-license',
-                'Teachers',
-                'Teachers',
-                'read',
-                'pz-school-teachers',
-                array($this, 'render_school_teachers_page')
-            );
-            
-            add_submenu_page(
-                'pz-school-license',
-                'Students',
-                'Students',
-                'read',
-                'pz-school-students',
-                array($this, 'render_school_students_page')
-            );
         }
     }
     
     /**
-     * Render school admin dashboard page
+     * Render setup page
+     */
+    public function render_setup_page() {
+        $school_product_id = get_option('pz_school_product_id');
+        $student_product_id = get_option('pz_student_product_id');
+        
+        $school_exists = $school_product_id && get_post($school_product_id);
+        $student_exists = $student_product_id && get_post($student_product_id);
+        
+        ?>
+        <div class="wrap">
+            <h1>Psychology Zone License Setup</h1>
+            
+            <?php if (isset($_GET['created'])): ?>
+                <div class="notice notice-success">
+                    <p><strong>Success!</strong> License products have been created.</p>
+                </div>
+            <?php endif; ?>
+            
+            <div class="card" style="max-width: 800px; margin-top: 20px;">
+                <h2>Product Status</h2>
+                
+                <table class="widefat">
+                    <tr>
+                        <th style="width: 200px;">School License Product</th>
+                        <td>
+                            <?php if ($school_exists): ?>
+                                <span style="color: green;">✓ Created</span>
+                                - <a href="<?php echo admin_url('post.php?post=' . $school_product_id . '&action=edit'); ?>" target="_blank">View Product</a>
+                            <?php else: ?>
+                                <span style="color: red;">✗ Not Created</span>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Student Package Product</th>
+                        <td>
+                            <?php if ($student_exists): ?>
+                                <span style="color: green;">✓ Created</span>
+                                - <a href="<?php echo admin_url('post.php?post=' . $student_product_id . '&action=edit'); ?>" target="_blank">View Product</a>
+                            <?php else: ?>
+                                <span style="color: red;">✗ Not Created</span>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                </table>
+                
+                <?php if (!$school_exists || !$student_exists): ?>
+                    <p style="margin-top: 20px;">
+                        <a href="<?php echo admin_url('admin.php?page=pz-setup-products&action=create'); ?>" class="button button-primary button-large">
+                            Create Products Now
+                        </a>
+                    </p>
+                <?php else: ?>
+                    <div style="margin-top: 20px; padding: 15px; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px;">
+                        <strong>✓ Setup Complete!</strong>
+                        <p>All products are created. You can now use the shortcode <code>[pz_license_packages]</code> on any page.</p>
+                        <p>
+                            <a href="<?php echo admin_url('edit.php?post_type=page'); ?>" class="button">Create a Page</a>
+                        </p>
+                    </div>
+                <?php endif; ?>
+                
+                <hr style="margin: 30px 0;">
+                
+                <h3>Quick Guide</h3>
+                <ol>
+                    <li>Make sure WooCommerce is installed and active</li>
+                    <li>Click "Create Products Now" button above</li>
+                    <li>Create a new page and add the shortcode: <code>[pz_license_packages]</code></li>
+                    <li>Configure your WooCommerce payment gateways (PayPal, Stripe, etc.)</li>
+                    <li>Test the enrollment process!</li>
+                </ol>
+                
+                <h3>Troubleshooting</h3>
+                <ul>
+                    <li>If the Enroll button shows 404, go to <strong>Settings → Permalinks</strong> and click Save Changes</li>
+                    <li>Make sure WooCommerce is properly configured with payment methods</li>
+                    <li>Check that the products are published (not draft)</li>
+                </ul>
+                
+                <h3>Debug Information</h3>
+                <table class="widefat">
+                    <tr>
+                        <th style="width: 200px;">WooCommerce Active</th>
+                        <td><?php echo class_exists('WooCommerce') ? '<span style="color: green;">✓ Yes</span>' : '<span style="color: red;">✗ No</span>'; ?></td>
+                    </tr>
+                    <tr>
+                        <th>School Product ID</th>
+                        <td><?php echo $school_product_id ? $school_product_id : 'Not set'; ?></td>
+                    </tr>
+                    <tr>
+                        <th>Student Product ID</th>
+                        <td><?php echo $student_product_id ? $student_product_id : 'Not set'; ?></td>
+                    </tr>
+                    <tr>
+                        <th>Test Enroll URL</th>
+                        <td>
+                            <a href="<?php echo home_url('/?pz_enroll=student'); ?>" target="_blank">
+                                <?php echo home_url('/?pz_enroll=student'); ?>
+                            </a>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+        <?php
+    }
+    
+    /**
+     * Render school admin page
      */
     public function render_school_admin_page() {
         $user_id = get_current_user_id();
@@ -876,111 +791,66 @@ class PZ_License_System {
             return;
         }
         
-        global $wpdb;
-        
-        // Get statistics
-        $teachers_count = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$wpdb->prefix}pz_school_members 
-            WHERE school_license_id = %d AND member_type = 'teacher' AND status = 'active'",
-            $school_license->id
-        ));
-        
-        $students_count = $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$wpdb->prefix}pz_school_members 
-            WHERE school_license_id = %d AND member_type = 'student' AND status = 'active'",
-            $school_license->id
-        ));
-        
         $days_remaining = floor((strtotime($school_license->end_date) - time()) / (60 * 60 * 24));
         
         ?>
         <div class="wrap">
             <h1><?php echo esc_html($school_license->school_name); ?> - Dashboard</h1>
             
-            <div class="pz-admin-dashboard" style="margin-top: 30px;">
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px;">
-                    
-                    <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #4A90E2;">
-                        <h2 style="margin: 0 0 10px 0; font-size: 16px; color: #666;">Teachers</h2>
-                        <p style="margin: 0; font-size: 36px; font-weight: bold; color: #4A90E2;"><?php echo $teachers_count; ?></p>
-                    </div>
-                    
-                    <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #5cb85c;">
-                        <h2 style="margin: 0 0 10px 0; font-size: 16px; color: #666;">Students</h2>
-                        <p style="margin: 0; font-size: 36px; font-weight: bold; color: #5cb85c;"><?php echo $students_count; ?></p>
-                    </div>
-                    
-                    <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid <?php echo $days_remaining < 30 ? '#f0ad4e' : '#E94B3C'; ?>;">
-                        <h2 style="margin: 0 0 10px 0; font-size: 16px; color: #666;">Days Remaining</h2>
-                        <p style="margin: 0; font-size: 36px; font-weight: bold; color: <?php echo $days_remaining < 30 ? '#f0ad4e' : '#E94B3C'; ?>;"><?php echo $days_remaining; ?></p>
-                    </div>
-                    
-                </div>
-                
-                <div style="background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                    <h2>License Information</h2>
-                    <table class="widefat" style="margin-top: 20px;">
-                        <tr>
-                            <th style="width: 200px;">School Name</th>
-                            <td><?php echo esc_html($school_license->school_name); ?></td>
-                        </tr>
-                        <tr>
-                            <th>License Key</th>
-                            <td><code><?php echo esc_html($school_license->license_key); ?></code></td>
-                        </tr>
-                        <tr>
-                            <th>Status</th>
-                            <td><span style="display: inline-block; padding: 5px 15px; background: #5cb85c; color: white; border-radius: 4px; font-size: 12px; font-weight: bold;">ACTIVE</span></td>
-                        </tr>
-                        <tr>
-                            <th>Start Date</th>
-                            <td><?php echo date('F j, Y', strtotime($school_license->start_date)); ?></td>
-                        </tr>
-                        <tr>
-                            <th>End Date</th>
-                            <td><?php echo date('F j, Y', strtotime($school_license->end_date)); ?></td>
-                        </tr>
-                    </table>
-                </div>
-                
-                <div style="margin-top: 30px; padding: 20px; background: #f0f7ff; border-left: 4px solid #4A90E2; border-radius: 4px;">
-                    <h3 style="margin-top: 0;">🚀 Coming Soon</h3>
-                    <p>Full teacher and student management features will be available here. You'll be able to:</p>
-                    <ul style="margin: 15px 0;">
-                        <li>Add and manage teachers</li>
-                        <li>Add and manage students</li>
-                        <li>Track student progress</li>
-                        <li>Assign materials and resources</li>
-                        <li>View analytics and reports</li>
-                    </ul>
-                </div>
+            <div style="background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 30px;">
+                <h2>License Information</h2>
+                <table class="widefat" style="margin-top: 20px;">
+                    <tr>
+                        <th style="width: 200px;">School Name</th>
+                        <td><?php echo esc_html($school_license->school_name); ?></td>
+                    </tr>
+                    <tr>
+                        <th>License Key</th>
+                        <td><code><?php echo esc_html($school_license->license_key); ?></code></td>
+                    </tr>
+                    <tr>
+                        <th>Status</th>
+                        <td><span style="display: inline-block; padding: 5px 15px; background: #5cb85c; color: white; border-radius: 4px; font-size: 12px; font-weight: bold;">ACTIVE</span></td>
+                    </tr>
+                    <tr>
+                        <th>Days Remaining</th>
+                        <td><strong><?php echo $days_remaining; ?> days</strong></td>
+                    </tr>
+                    <tr>
+                        <th>Expires On</th>
+                        <td><?php echo date('F j, Y', strtotime($school_license->end_date)); ?></td>
+                    </tr>
+                </table>
+            </div>
+            
+            <div style="margin-top: 30px; padding: 20px; background: #f0f7ff; border-left: 4px solid #4A90E2; border-radius: 4px;">
+                <h3 style="margin-top: 0;">🚀 Coming Soon</h3>
+                <p>Full teacher and student management features will be available here.</p>
             </div>
         </div>
         <?php
     }
     
     /**
-     * Render school teachers page (placeholder)
+     * School license notice
      */
-    public function render_school_teachers_page() {
-        ?>
-        <div class="wrap">
-            <h1>Manage Teachers</h1>
-            <p>Teacher management features coming soon...</p>
-        </div>
-        <?php
-    }
-    
-    /**
-     * Render school students page (placeholder)
-     */
-    public function render_school_students_page() {
-        ?>
-        <div class="wrap">
-            <h1>Manage Students</h1>
-            <p>Student management features coming soon...</p>
-        </div>
-        <?php
+    public function school_license_dashboard_notice() {
+        $user_id = get_current_user_id();
+        $school_license = $this->get_user_school_license($user_id);
+        
+        if ($school_license && is_admin() && get_current_screen()->id === 'dashboard') {
+            $days_remaining = floor((strtotime($school_license->end_date) - time()) / (60 * 60 * 24));
+            $status_color = $days_remaining < 30 ? '#f0ad4e' : '#5cb85c';
+            ?>
+            <div class="notice notice-info" style="border-left-color: <?php echo $status_color; ?>;">
+                <h3 style="margin: 10px 0;">School License Active</h3>
+                <p>
+                    <strong><?php echo esc_html($school_license->school_name); ?></strong><br>
+                    License expires in <strong><?php echo $days_remaining; ?> days</strong>
+                </p>
+            </div>
+            <?php
+        }
     }
 }
 
@@ -988,10 +858,10 @@ class PZ_License_System {
 function pz_license_system() {
     return PZ_License_System::get_instance();
 }
-pz_license_system();
+add_action('plugins_loaded', 'pz_license_system');
 
-// Dummy login credentials for development
-// School Admin: school@test.com / SchoolPass123!
-// Student: student@test.com / StudentPass123!
-// Teacher: teacher@test.com / TeacherPass123!
-?>
+// Also hook the redirect after login
+add_action('woocommerce_login_redirect', function($redirect, $user) {
+    $pz = pz_license_system();
+    return $pz->redirect_after_login($redirect, $user);
+}, 10, 2);

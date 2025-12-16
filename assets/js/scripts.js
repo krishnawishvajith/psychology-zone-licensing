@@ -5,13 +5,9 @@
 
 jQuery(document).ready(function($) {
     
-    // Package selection - Enroll buttons
-    $('.pz-enroll-btn').on('click', function(e) {
-        e.preventDefault();
-        var package = $(this).data('package');
-        var checkoutUrl = pzLicense.checkout_url + '?package=' + package;
-        window.location.href = checkoutUrl;
-    });
+    // REMOVED: Package selection - Enroll buttons
+    // The buttons now work as normal links, no JavaScript needed
+    // This was causing the redirect to "undefined" issue
     
     // Checkout page - Tab switching
     $('.pz-tab-btn').on('click', function(e) {

@@ -394,3 +394,57 @@
         font-size: 36px;
     }
 }
+
+
+
+
+/* Add to existing styles.css - Link button styling */
+
+.pz-enroll-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    padding: 16px 32px;
+    font-size: 18px;
+    font-weight: 600;
+    color: white !important;
+    background: linear-gradient(135deg, #4A90E2 0%, #357ABD 100%);
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    text-decoration: none !important;
+}
+
+.pz-enroll-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(74, 144, 226, 0.4);
+    color: white !important;
+    text-decoration: none !important;
+}
+
+.pz-enroll-btn:visited {
+    color: white !important;
+}
+
+.pz-school-btn {
+    background: linear-gradient(135deg, #E94B3C 0%, #D63426 100%);
+}
+
+.pz-school-btn:hover {
+    box-shadow: 0 6px 20px rgba(233, 75, 60, 0.4);
+}
+
+.pz-enroll-btn .arrow-icon {
+    width: 20px;
+    height: 20px;
+    transition: transform 0.3s ease;
+}
+
+.pz-enroll-btn:hover .arrow-icon {
+    transform: translateX(5px);
+}
