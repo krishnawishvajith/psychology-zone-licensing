@@ -17,6 +17,9 @@ define('PZ_LICENSE_VERSION', '2.0.0');
 define('PZ_LICENSE_PATH', plugin_dir_path(__FILE__));
 define('PZ_LICENSE_URL', plugin_dir_url(__FILE__));
 
+// Include flipbooks class
+require_once PZ_LICENSE_PATH . 'includes/class-pz-flipbooks.php';
+
 /**
  * Main Plugin Class
  */
