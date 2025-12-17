@@ -210,6 +210,8 @@ class PZ_License_System {
         dbDelta($sql2);
         dbDelta($sql3);
         
+        PZ_Flipbooks::create_table();
+
         flush_rewrite_rules();
     }
     
