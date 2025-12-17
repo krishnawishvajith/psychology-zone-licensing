@@ -392,7 +392,19 @@ class PZ_Flipbooks
             return false;
         }
 
-        // Get all completed orders for this user
+        // Check if this is an auto-created account
+        $is_auto_account = get_user_meta($user_id, 'pz_auto_account', true);
+
+        if ($is_auto_account) {
+            // Check if license is still valid
+            $expiry = get_user_meta($user_id, 'pz_license_expiry', true);
+            if ($expiry && strtotime($expiry) > time()) {
+                return true; // Auto account with valid license
+            }
+            return false;
+        }
+
+        // Regular purchase check
         $orders = wc_get_orders(array(
             'customer_id' => $user_id,
             'status' => array('completed', 'processing'),
@@ -422,11 +434,11 @@ class PZ_Flipbooks
         }
 
         global $wpdb;
-        
+
         // Check table exists
         $table_name = $wpdb->prefix . 'pz_flipbooks';
         $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'");
-        
+
         if ($table_exists != $table_name) {
             error_log('PZ Flipbooks: Table does not exist');
             return array();
@@ -441,7 +453,7 @@ class PZ_Flipbooks
 
         // Check if user purchased school license
         $has_school = $this->user_has_purchased_product($user_id, $school_product_id);
-        
+
         // Check if user purchased student package
         $has_student = $this->user_has_purchased_product($user_id, $student_product_id);
 
@@ -456,8 +468,8 @@ class PZ_Flipbooks
             );
             error_log('PZ Flipbooks: School user - Found ' . count($flipbooks) . ' flipbooks');
             return $flipbooks;
-        } 
-        
+        }
+
         if ($has_student) {
             // Student package buyers only get 'all' access flipbooks
             $flipbooks = $wpdb->get_results(
@@ -566,7 +578,7 @@ class PZ_Flipbooks
     public function add_flipbooks_tab($items)
     {
         $user_id = get_current_user_id();
-        
+
         if (!$user_id) {
             return $items;
         }
@@ -602,14 +614,14 @@ class PZ_Flipbooks
     public function flipbooks_tab_content()
     {
         $user_id = get_current_user_id();
-        
+
         // Debug info for admins
         if (current_user_can('manage_options')) {
             $school_product_id = get_option('pz_school_product_id');
             $student_product_id = get_option('pz_student_product_id');
             $has_school = $this->user_has_purchased_product($user_id, $school_product_id);
             $has_student = $this->user_has_purchased_product($user_id, $student_product_id);
-            
+
             echo '<!-- DEBUG INFO:';
             echo "\nUser ID: " . $user_id;
             echo "\nSchool Product ID: " . $school_product_id;
@@ -618,9 +630,9 @@ class PZ_Flipbooks
             echo "\nHas Purchased Student: " . ($has_student ? 'YES' : 'NO');
             echo "\n-->";
         }
-        
+
         $flipbooks = $this->get_flipbooks_for_user($user_id);
-        
+
         if (current_user_can('manage_options')) {
             echo '<!-- Flipbooks found: ' . count($flipbooks) . ' -->';
         }
