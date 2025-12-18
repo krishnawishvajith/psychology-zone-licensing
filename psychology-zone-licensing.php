@@ -780,7 +780,7 @@ class PZ_License_System
      */
     public function add_admin_menu()
     {
-        // Setup products page
+        // Setup products page (only for admins)
         add_menu_page(
             'PZ License Setup',
             'PZ License Setup',
@@ -791,19 +791,39 @@ class PZ_License_System
             100
         );
 
-        // School license menu (only for users with active license)
+        if (current_user_can('manage_options')) {
+            add_menu_page(
+                'School Licenses',
+                'School Licenses',
+                'manage_options',
+                'pz-school-licenses',
+                array($this, 'render_all_school_licenses_page'),
+                'dashicons-welcome-learn-more',
+                30
+            );
+            
+            add_submenu_page(
+                null, // Hide from menu, only accessible via direct link
+                'View School License',
+                'View School License',
+                'manage_options',
+                'pz-view-school-license',
+                array($this, 'render_single_school_license_page')
+            );
+        }
+
         $user_id = get_current_user_id();
         $school_license = $this->get_user_school_license($user_id);
 
         if ($school_license) {
             add_menu_page(
-                'School License',
-                'School License',
+                'My School License',
+                'My School License',
                 'read',
                 'pz-school-license',
                 array($this, 'render_school_admin_page'),
-                'dashicons-welcome-learn-more',
-                30
+                'dashicons-id-alt',
+                31
             );
         }
     }
@@ -918,6 +938,250 @@ class PZ_License_System
         </div>
     <?php
     }
+
+    /**
+     * Render all school licenses page (for admins)
+     */
+    public function render_all_school_licenses_page()
+    {
+        global $wpdb;
+        
+        // Get all school licenses
+        $licenses = $wpdb->get_results(
+            "SELECT sl.*, u.user_login, u.user_email 
+            FROM {$wpdb->prefix}pz_school_licenses sl
+            LEFT JOIN {$wpdb->prefix}users u ON sl.user_id = u.ID
+            ORDER BY sl.id DESC"
+        );
+
+        ?>
+        <div class="wrap">
+            <h1>All School Licenses</h1>
+            
+            <?php if (empty($licenses)): ?>
+                <div style="background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 20px; text-align: center;">
+                    <p style="font-size: 18px; color: #666;">No school licenses have been purchased yet.</p>
+                </div>
+            <?php else: ?>
+                <div style="background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 20px;">
+                    <table class="wp-list-table widefat fixed striped">
+                        <thead>
+                            <tr>
+                                <th style="width: 50px;">ID</th>
+                                <th>School Name</th>
+                                <th>Owner</th>
+                                <th>License Key</th>
+                                <th>Status</th>
+                                <th>Expires</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($licenses as $license): 
+                                $days_remaining = floor((strtotime($license->end_date) - time()) / (60 * 60 * 24));
+                                $is_expired = $days_remaining < 0;
+                                $status_color = $is_expired ? '#dc3545' : ($days_remaining < 30 ? '#ffc107' : '#28a745');
+                            ?>
+                                <tr>
+                                    <td><?php echo esc_html($license->id); ?></td>
+                                    <td><strong><?php echo esc_html($license->school_name); ?></strong></td>
+                                    <td>
+                                        <?php echo esc_html($license->user_login); ?><br>
+                                        <small style="color: #666;"><?php echo esc_html($license->user_email); ?></small>
+                                    </td>
+                                    <td><code><?php echo esc_html($license->license_key); ?></code></td>
+                                    <td>
+                                        <span style="display: inline-block; padding: 5px 12px; background: <?php echo $status_color; ?>; color: white; border-radius: 4px; font-size: 12px; font-weight: bold;">
+                                            <?php echo $is_expired ? 'EXPIRED' : 'ACTIVE'; ?>
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <?php echo date('M j, Y', strtotime($license->end_date)); ?><br>
+                                        <small style="color: <?php echo $status_color; ?>;">
+                                            <?php echo $is_expired ? 'Expired' : $days_remaining . ' days left'; ?>
+                                        </small>
+                                    </td>
+                                    <td>
+                                        <a href="<?php echo admin_url('admin.php?page=pz-view-school-license&license_id=' . $license->id); ?>" class="button button-small">
+                                            View Details
+                                        </a>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+        </div>
+        <?php
+    }
+
+    /**
+     * Render single school license details page (for admins)
+     */
+    public function render_single_school_license_page()
+    {
+        if (!current_user_can('manage_options')) {
+            wp_die('Unauthorized access');
+        }
+
+        if (!isset($_GET['license_id'])) {
+            wp_die('License ID is required');
+        }
+
+        global $wpdb;
+        $license_id = intval($_GET['license_id']);
+        
+        $license = $wpdb->get_row($wpdb->prepare(
+            "SELECT sl.*, u.user_login, u.user_email 
+            FROM {$wpdb->prefix}pz_school_licenses sl
+            LEFT JOIN {$wpdb->prefix}users u ON sl.user_id = u.ID
+            WHERE sl.id = %d",
+            $license_id
+        ));
+
+        if (!$license) {
+            wp_die('License not found');
+        }
+
+        $days_remaining = floor((strtotime($license->end_date) - time()) / (60 * 60 * 24));
+
+        // Get auto-created accounts data
+        $teacher_user = get_user_by('id', $license->teacher_user_id);
+        $student_user = get_user_by('id', $license->student_user_id);
+
+        // Get stored passwords
+        $teacher_password = get_user_meta($license->teacher_user_id, 'pz_original_password', true);
+        $student_password = get_user_meta($license->student_user_id, 'pz_original_password', true);
+
+        ?>
+        <div class="wrap">
+            <h1><?php echo esc_html($license->school_name); ?> - License Details</h1>
+            <p>
+                <a href="<?php echo admin_url('admin.php?page=pz-school-licenses'); ?>" class="button">
+                    ← Back to All Licenses
+                </a>
+            </p>
+
+            <!-- License Info -->
+            <div style="background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 20px;">
+                <h2>License Information</h2>
+                <table class="widefat">
+                    <tr>
+                        <th style="width: 200px;">School Name</th>
+                        <td><?php echo esc_html($license->school_name); ?></td>
+                    </tr>
+                    <tr>
+                        <th>Owner Username</th>
+                        <td><?php echo esc_html($license->user_login); ?></td>
+                    </tr>
+                    <tr>
+                        <th>Owner Email</th>
+                        <td><?php echo esc_html($license->user_email); ?></td>
+                    </tr>
+                    <tr>
+                        <th>License Key</th>
+                        <td><code><?php echo esc_html($license->license_key); ?></code></td>
+                    </tr>
+                    <tr>
+                        <th>Order ID</th>
+                        <td>
+                            <a href="<?php echo admin_url('post.php?post=' . $license->order_id . '&action=edit'); ?>" target="_blank">
+                                #<?php echo $license->order_id; ?>
+                            </a>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Status</th>
+                        <td>
+                            <span style="display: inline-block; padding: 5px 15px; background: <?php echo $days_remaining > 0 ? '#5cb85c' : '#dc3545'; ?>; color: white; border-radius: 4px; font-size: 12px; font-weight: bold;">
+                                <?php echo $days_remaining > 0 ? 'ACTIVE' : 'EXPIRED'; ?>
+                            </span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Days Remaining</th>
+                        <td><strong><?php echo $days_remaining; ?> days</strong></td>
+                    </tr>
+                    <tr>
+                        <th>Start Date</th>
+                        <td><?php echo date('F j, Y', strtotime($license->start_date)); ?></td>
+                    </tr>
+                    <tr>
+                        <th>Expiry Date</th>
+                        <td><?php echo date('F j, Y', strtotime($license->end_date)); ?></td>
+                    </tr>
+                </table>
+            </div>
+
+            <!-- Auto-Created Accounts -->
+            <div style="background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 20px;">
+                <h2>Auto-Created Accounts</h2>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px;">
+                    <!-- Teacher Account -->
+                    <div style="padding: 20px; background: #f0f7ff; border-radius: 8px; border-left: 4px solid #4A90E2;">
+                        <h3 style="margin-top: 0; color: #4A90E2;">👨‍🏫 Teacher Account</h3>
+                        <table class="widefat">
+                            <tr>
+                                <th style="width: 100px;">User ID</th>
+                                <td><?php echo esc_html($license->teacher_user_id); ?></td>
+                            </tr>
+                            <tr>
+                                <th>Username</th>
+                                <td><code><?php echo esc_html($teacher_user->user_login); ?></code></td>
+                            </tr>
+                            <tr>
+                                <th>Password</th>
+                                <td><code><?php echo esc_html($teacher_password); ?></code></td>
+                            </tr>
+                            <tr>
+                                <th>Email</th>
+                                <td><?php echo esc_html($teacher_user->user_email); ?></td>
+                            </tr>
+                            <tr>
+                                <th>Role</th>
+                                <td>Teacher</td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <!-- Student Account -->
+                    <div style="padding: 20px; background: #fff5f5; border-radius: 8px; border-left: 4px solid #E94B3C;">
+                        <h3 style="margin-top: 0; color: #E94B3C;">👨‍🎓 Student Account</h3>
+                        <table class="widefat">
+                            <tr>
+                                <th style="width: 100px;">User ID</th>
+                                <td><?php echo esc_html($license->student_user_id); ?></td>
+                            </tr>
+                            <tr>
+                                <th>Username</th>
+                                <td><code><?php echo esc_html($student_user->user_login); ?></code></td>
+                            </tr>
+                            <tr>
+                                <th>Password</th>
+                                <td><code><?php echo esc_html($student_password); ?></code></td>
+                            </tr>
+                            <tr>
+                                <th>Email</th>
+                                <td><?php echo esc_html($student_user->user_email); ?></td>
+                            </tr>
+                            <tr>
+                                <th>Role</th>
+                                <td>Student</td>
+                            </tr>
+                        </table>
+                    </div>
+                </div>
+
+                <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px;">
+                    <p style="margin: 0;"><strong>Note:</strong> These accounts were automatically created when the school license was purchased. They have full access to all study materials until the license expires.</p>
+                </div>
+            </div>
+        </div>
+        <?php
+    }
+
 
     /**
      * Render school admin page
