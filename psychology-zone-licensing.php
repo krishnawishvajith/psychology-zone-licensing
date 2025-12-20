@@ -1235,7 +1235,7 @@ class PZ_License_System
                     License expires in <strong><?php echo $days_remaining; ?> days</strong>
                 </p>
             </div>
-<?php
+    <?php
         }
     }
 }
@@ -1252,3 +1252,174 @@ add_action('woocommerce_login_redirect', function ($redirect, $user) {
     $pz = pz_license_system();
     return $pz->redirect_after_login($redirect, $user);
 }, 10, 2);
+
+
+
+// Add to psychology-zone-licensing.php after the class definition
+
+// TEMPORARY DIAGNOSTIC FUNCTION - Remove after fixing
+add_action('admin_menu', 'pz_add_diagnostic_menu');
+function pz_add_diagnostic_menu()
+{
+    add_submenu_page(
+        'pz-setup-products',
+        'License Diagnostic',
+        'Diagnostic',
+        'manage_options',
+        'pz-diagnostic',
+        'pz_render_diagnostic_page'
+    );
+}
+
+function pz_render_diagnostic_page()
+{
+    global $wpdb;
+
+    $user_id = get_current_user_id();
+
+    ?>
+    <div class="wrap">
+        <h1>License System Diagnostic</h1>
+
+        <h2>Your User Info</h2>
+        <table class="widefat">
+            <tr>
+                <th>User ID</th>
+                <td><?php echo $user_id; ?></td>
+            </tr>
+        </table>
+
+        <h2>School Licenses in Database</h2>
+        <?php
+        $licenses = $wpdb->get_results("SELECT * FROM {$wpdb->prefix}pz_school_licenses ORDER BY id DESC");
+
+        if (empty($licenses)) {
+            echo '<p>No school licenses found in database.</p>';
+        } else {
+        ?>
+            <table class="widefat">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>User ID</th>
+                        <th>School Name</th>
+                        <th>Teacher User ID</th>
+                        <th>Student User ID</th>
+                        <th>Status</th>
+                        <th>End Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($licenses as $license): ?>
+                        <tr>
+                            <td><?php echo $license->id; ?></td>
+                            <td><?php echo $license->user_id; ?></td>
+                            <td><?php echo esc_html($license->school_name); ?></td>
+                            <td>
+                                <?php
+                                echo $license->teacher_user_id;
+                                $teacher = get_user_by('id', $license->teacher_user_id);
+                                echo $teacher ? ' ✓' : ' ✗ NOT FOUND';
+                                ?>
+                            </td>
+                            <td>
+                                <?php
+                                echo $license->student_user_id;
+                                $student = get_user_by('id', $license->student_user_id);
+                                echo $student ? ' ✓' : ' ✗ NOT FOUND';
+                                ?>
+                            </td>
+                            <td><?php echo $license->status; ?></td>
+                            <td><?php echo $license->end_date; ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php
+        }
+        ?>
+
+        <h2>Auto-Created Users</h2>
+        <?php
+        $auto_users = get_users(array(
+            'meta_key' => 'pz_auto_account',
+            'meta_value' => true
+        ));
+
+        if (empty($auto_users)) {
+            echo '<p>No auto-created users found.</p>';
+        } else {
+        ?>
+            <table class="widefat">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Username</th>
+                        <th>Type</th>
+                        <th>Password Stored</th>
+                        <th>Expiry</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($auto_users as $user): ?>
+                        <tr>
+                            <td><?php echo $user->ID; ?></td>
+                            <td><?php echo $user->user_login; ?></td>
+                            <td><?php echo get_user_meta($user->ID, 'pz_account_type', true); ?></td>
+                            <td>
+                                <?php
+                                $pwd = get_user_meta($user->ID, 'pz_original_password', true);
+                                echo $pwd ? '✓ YES' : '✗ NO';
+                                ?>
+                            </td>
+                            <td><?php echo get_user_meta($user->ID, 'pz_license_expiry', true); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php
+        }
+        ?>
+
+        <h2>Recent Orders</h2>
+        <?php
+        $orders = wc_get_orders(array(
+            'limit' => 5,
+            'orderby' => 'date',
+            'order' => 'DESC',
+        ));
+
+        if (empty($orders)) {
+            echo '<p>No orders found.</p>';
+        } else {
+        ?>
+            <table class="widefat">
+                <thead>
+                    <tr>
+                        <th>Order ID</th>
+                        <th>Customer</th>
+                        <th>Package Type</th>
+                        <th>License Activated</th>
+                        <th>Teacher Username</th>
+                        <th>Student Username</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($orders as $order): ?>
+                        <tr>
+                            <td><?php echo $order->get_id(); ?></td>
+                            <td><?php echo $order->get_customer_id(); ?></td>
+                            <td><?php echo $order->get_meta('_pz_package_type'); ?></td>
+                            <td><?php echo $order->get_meta('_pz_license_activated') ? '✓ YES' : '✗ NO'; ?></td>
+                            <td><?php echo $order->get_meta('_pz_teacher_username'); ?></td>
+                            <td><?php echo $order->get_meta('_pz_student_username'); ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php
+        }
+        ?>
+    </div>
+<?php
+}
