@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Flipbook Management Class (Order-Based Access)
+ * Flipbook Management Class (FIXED - Auto Accounts Support)
  * File: includes/class-pz-flipbooks.php
  */
 
@@ -384,11 +384,12 @@ class PZ_Flipbooks
     }
 
     /**
-     * Check if user purchased a specific product (COMPLETED orders only)
+     * FIXED: Check if user has valid license access
+     * Supports both regular purchases and auto-created accounts
      */
-    private function user_has_purchased_product($user_id, $product_id)
+    private function user_has_valid_license($user_id)
     {
-        if (!$user_id || !$product_id) {
+        if (!$user_id) {
             return false;
         }
 
@@ -399,12 +400,17 @@ class PZ_Flipbooks
             // Check if license is still valid
             $expiry = get_user_meta($user_id, 'pz_license_expiry', true);
             if ($expiry && strtotime($expiry) > time()) {
-                return true; // Auto account with valid license
+                error_log('PZ Flipbooks: Auto account ' . $user_id . ' has valid license until ' . $expiry);
+                return true;
             }
+            error_log('PZ Flipbooks: Auto account ' . $user_id . ' license expired');
             return false;
         }
 
-        // Regular purchase check
+        // For regular accounts, check WooCommerce orders
+        $school_product_id = get_option('pz_school_product_id');
+        $student_product_id = get_option('pz_student_product_id');
+
         $orders = wc_get_orders(array(
             'customer_id' => $user_id,
             'status' => array('completed', 'processing'),
@@ -414,7 +420,55 @@ class PZ_Flipbooks
         foreach ($orders as $order) {
             foreach ($order->get_items() as $item) {
                 $product = $item->get_product();
-                if ($product && $product->get_id() == $product_id) {
+                if ($product) {
+                    $product_id = $product->get_id();
+                    if ($product_id == $school_product_id || $product_id == $student_product_id) {
+                        error_log('PZ Flipbooks: Regular user ' . $user_id . ' has valid purchase');
+                        return true;
+                    }
+                }
+            }
+        }
+
+        error_log('PZ Flipbooks: User ' . $user_id . ' has no valid license');
+        return false;
+    }
+
+    /**
+     * FIXED: Check if user is school license holder (including auto-accounts)
+     */
+    private function user_has_school_access($user_id)
+    {
+        if (!$user_id) {
+            return false;
+        }
+
+        // Check if auto-created teacher or student account
+        $is_auto_account = get_user_meta($user_id, 'pz_auto_account', true);
+        if ($is_auto_account) {
+            // Auto accounts always have school-level access if license is valid
+            $expiry = get_user_meta($user_id, 'pz_license_expiry', true);
+            if ($expiry && strtotime($expiry) > time()) {
+                error_log('PZ Flipbooks: Auto account ' . $user_id . ' has school access');
+                return true;
+            }
+            return false;
+        }
+
+        // Check if user purchased school product
+        $school_product_id = get_option('pz_school_product_id');
+        
+        $orders = wc_get_orders(array(
+            'customer_id' => $user_id,
+            'status' => array('completed', 'processing'),
+            'limit' => -1,
+        ));
+
+        foreach ($orders as $order) {
+            foreach ($order->get_items() as $item) {
+                $product = $item->get_product();
+                if ($product && $product->get_id() == $school_product_id) {
+                    error_log('PZ Flipbooks: User ' . $user_id . ' purchased school license');
                     return true;
                 }
             }
@@ -424,7 +478,7 @@ class PZ_Flipbooks
     }
 
     /**
-     * Get flipbooks for user based on purchased products
+     * FIXED: Get flipbooks for user based on license type
      */
     public function get_flipbooks_for_user($user_id)
     {
@@ -444,44 +498,33 @@ class PZ_Flipbooks
             return array();
         }
 
-        // Get product IDs
-        $school_product_id = get_option('pz_school_product_id');
-        $student_product_id = get_option('pz_student_product_id');
+        // Check if user has school-level access (purchased school or is auto-account)
+        $has_school_access = $this->user_has_school_access($user_id);
 
-        error_log('PZ Flipbooks: School Product ID: ' . $school_product_id);
-        error_log('PZ Flipbooks: Student Product ID: ' . $student_product_id);
-
-        // Check if user purchased school license
-        $has_school = $this->user_has_purchased_product($user_id, $school_product_id);
-
-        // Check if user purchased student package
-        $has_student = $this->user_has_purchased_product($user_id, $student_product_id);
-
-        error_log('PZ Flipbooks: User ' . $user_id . ' - School: ' . ($has_school ? 'YES' : 'NO') . ', Student: ' . ($has_student ? 'YES' : 'NO'));
-
-        if ($has_school) {
-            // School license buyers get ALL flipbooks
+        if ($has_school_access) {
+            // School license holders and auto-accounts get ALL flipbooks
             $flipbooks = $wpdb->get_results(
                 "SELECT * FROM {$wpdb->prefix}pz_flipbooks 
                 WHERE status = 'active' 
                 ORDER BY sort_order ASC, id DESC"
             );
-            error_log('PZ Flipbooks: School user - Found ' . count($flipbooks) . ' flipbooks');
+            error_log('PZ Flipbooks: User ' . $user_id . ' with school access - Found ' . count($flipbooks) . ' flipbooks');
             return $flipbooks;
         }
 
-        if ($has_student) {
-            // Student package buyers only get 'all' access flipbooks
+        // Check if user has valid student license
+        if ($this->user_has_valid_license($user_id)) {
+            // Student license holders only get 'all' access flipbooks
             $flipbooks = $wpdb->get_results(
                 "SELECT * FROM {$wpdb->prefix}pz_flipbooks 
                 WHERE status = 'active' AND access_type = 'all'
                 ORDER BY sort_order ASC, id DESC"
             );
-            error_log('PZ Flipbooks: Student user - Found ' . count($flipbooks) . ' flipbooks');
+            error_log('PZ Flipbooks: Student user ' . $user_id . ' - Found ' . count($flipbooks) . ' flipbooks');
             return $flipbooks;
         }
 
-        error_log('PZ Flipbooks: User has no valid purchases');
+        error_log('PZ Flipbooks: User ' . $user_id . ' has no valid license');
         return array();
     }
 
@@ -531,7 +574,7 @@ class PZ_Flipbooks
     }
 
     /**
-     * Check if user can access flipbook based on purchases
+     * FIXED: Check if user can access specific flipbook
      */
     private function user_can_access_flipbook($user_id, $flipbook_id)
     {
@@ -546,19 +589,16 @@ class PZ_Flipbooks
             return false;
         }
 
-        $school_product_id = get_option('pz_school_product_id');
-        $student_product_id = get_option('pz_student_product_id');
+        // Check if user has school-level access
+        $has_school_access = $this->user_has_school_access($user_id);
 
-        $has_school = $this->user_has_purchased_product($user_id, $school_product_id);
-
-        if ($has_school) {
-            return true; // School buyers can access everything
+        if ($has_school_access) {
+            return true; // School license holders can access everything
         }
 
-        $has_student = $this->user_has_purchased_product($user_id, $student_product_id);
-
-        if ($has_student && $flipbook->access_type === 'all') {
-            return true; // Student buyers can access 'all' flipbooks
+        // Check if user has any valid license and flipbook allows 'all'
+        if ($flipbook->access_type === 'all' && $this->user_has_valid_license($user_id)) {
+            return true;
         }
 
         return false;
@@ -573,7 +613,7 @@ class PZ_Flipbooks
     }
 
     /**
-     * Add flipbooks tab to My Account menu (based on purchases)
+     * Add flipbooks tab to My Account menu (based on license)
      */
     public function add_flipbooks_tab($items)
     {
@@ -583,18 +623,8 @@ class PZ_Flipbooks
             return $items;
         }
 
-        // Get product IDs
-        $school_product_id = get_option('pz_school_product_id');
-        $student_product_id = get_option('pz_student_product_id');
-
-        // Check if user purchased either product
-        $has_school = $this->user_has_purchased_product($user_id, $school_product_id);
-        $has_student = $this->user_has_purchased_product($user_id, $student_product_id);
-
-        error_log('PZ Flipbooks Tab: User ' . $user_id . ' - School: ' . ($has_school ? 'YES' : 'NO') . ', Student: ' . ($has_student ? 'YES' : 'NO'));
-
-        // Show tab if user purchased either product
-        if ($has_school || $has_student) {
+        // Show tab if user has any valid license
+        if ($this->user_has_valid_license($user_id)) {
             if (isset($items['customer-logout'])) {
                 $logout = $items['customer-logout'];
                 unset($items['customer-logout']);
@@ -617,17 +647,15 @@ class PZ_Flipbooks
 
         // Debug info for admins
         if (current_user_can('manage_options')) {
-            $school_product_id = get_option('pz_school_product_id');
-            $student_product_id = get_option('pz_student_product_id');
-            $has_school = $this->user_has_purchased_product($user_id, $school_product_id);
-            $has_student = $this->user_has_purchased_product($user_id, $student_product_id);
-
+            $is_auto = get_user_meta($user_id, 'pz_auto_account', true);
+            $expiry = get_user_meta($user_id, 'pz_license_expiry', true);
+            
             echo '<!-- DEBUG INFO:';
             echo "\nUser ID: " . $user_id;
-            echo "\nSchool Product ID: " . $school_product_id;
-            echo "\nStudent Product ID: " . $student_product_id;
-            echo "\nHas Purchased School: " . ($has_school ? 'YES' : 'NO');
-            echo "\nHas Purchased Student: " . ($has_student ? 'YES' : 'NO');
+            echo "\nIs Auto Account: " . ($is_auto ? 'YES' : 'NO');
+            echo "\nLicense Expiry: " . ($expiry ? $expiry : 'N/A');
+            echo "\nHas Valid License: " . ($this->user_has_valid_license($user_id) ? 'YES' : 'NO');
+            echo "\nHas School Access: " . ($this->user_has_school_access($user_id) ? 'YES' : 'NO');
             echo "\n-->";
         }
 
