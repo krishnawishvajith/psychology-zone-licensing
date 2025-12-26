@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Flipbook Management Class (ENHANCED - Shows School Credentials in My Account)
+ * Flipbook Management Class (Order-Based Access)
  * File: includes/class-pz-flipbooks.php
  */
 
@@ -32,15 +32,10 @@ class PZ_Flipbooks
         // AJAX handler for secure flipbook loading (for logged-in users)
         add_action('wp_ajax_pz_load_flipbook', array($this, 'load_flipbook_content'));
 
-        // WooCommerce My Account tabs
+        // WooCommerce My Account tab
         add_filter('woocommerce_account_menu_items', array($this, 'add_flipbooks_tab'), 40);
         add_action('init', array($this, 'add_flipbooks_endpoint'));
         add_action('woocommerce_account_flipbooks_endpoint', array($this, 'flipbooks_tab_content'));
-
-        // NEW: Add School Dashboard tab for school license holders
-        add_filter('woocommerce_account_menu_items', array($this, 'add_school_dashboard_tab'), 41);
-        add_action('init', array($this, 'add_school_dashboard_endpoint'));
-        add_action('woocommerce_account_school-dashboard_endpoint', array($this, 'school_dashboard_content'));
 
         // Enqueue scripts
         add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
@@ -229,117 +224,7 @@ class PZ_Flipbooks
                 'ajaxurl' => admin_url('admin-ajax.php'),
                 'nonce' => wp_create_nonce('pz_flipbooks_view_nonce')
             ));
-            
-            // Add inline styles for school dashboard
-            wp_add_inline_style('pz-flipbooks-frontend', $this->get_school_dashboard_styles());
         }
-    }
-
-    /**
-     * Get school dashboard styles
-     */
-    private function get_school_dashboard_styles()
-    {
-        return "
-        .pz-school-credentials {
-            background: white;
-            padding: 30px;
-            border-radius: 8px;
-            margin: 20px 0;
-        }
-        .pz-credential-card {
-            background: #f9f9f9;
-            padding: 25px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            border-left: 4px solid #4A90E2;
-        }
-        .pz-credential-card h3 {
-            margin-top: 0;
-            color: #333;
-        }
-        .pz-credential-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            background: white;
-            padding: 15px 20px;
-            border-radius: 6px;
-            margin: 10px 0;
-        }
-        .pz-credential-label {
-            font-weight: 600;
-            color: #333;
-            min-width: 100px;
-        }
-        .pz-credential-value {
-            flex: 1;
-            margin: 0 15px;
-        }
-        .pz-credential-value code {
-            background: #f5f5f5;
-            padding: 8px 15px;
-            border-radius: 4px;
-            font-size: 14px;
-            color: #E94B3C;
-            display: block;
-        }
-        .pz-copy-btn {
-            background: #4A90E2;
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 13px;
-            transition: all 0.3s;
-        }
-        .pz-copy-btn:hover {
-            background: #357ABD;
-        }
-        .pz-info-notice {
-            background: #d1ecf1;
-            border: 1px solid #bee5eb;
-            padding: 15px 20px;
-            border-radius: 6px;
-            margin: 20px 0;
-        }
-        .pz-info-notice p {
-            margin: 5px 0;
-            font-size: 14px;
-            color: #0c5460;
-        }
-        .pz-license-info {
-            background: #e8f5e9;
-            border: 2px solid #4caf50;
-            padding: 20px;
-            border-radius: 8px;
-            margin-bottom: 30px;
-        }
-        .pz-license-info-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-top: 15px;
-        }
-        .pz-license-info-item {
-            background: white;
-            padding: 15px;
-            border-radius: 6px;
-        }
-        .pz-license-info-item strong {
-            display: block;
-            color: #666;
-            font-size: 12px;
-            text-transform: uppercase;
-            margin-bottom: 5px;
-        }
-        .pz-license-info-item span {
-            font-size: 18px;
-            color: #333;
-            font-weight: 600;
-        }
-        ";
     }
 
     /**
@@ -347,16 +232,19 @@ class PZ_Flipbooks
      */
     public function save_flipbook()
     {
+        // Verify nonce
         if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'pz_flipbooks_nonce')) {
             wp_send_json_error(array('message' => 'Security check failed'));
             return;
         }
 
+        // Check permissions
         if (!current_user_can('manage_options')) {
             wp_send_json_error(array('message' => 'Unauthorized - Admin access required'));
             return;
         }
 
+        // Validate required fields
         if (empty($_POST['title'])) {
             wp_send_json_error(array('message' => 'Title is required'));
             return;
@@ -369,6 +257,7 @@ class PZ_Flipbooks
 
         global $wpdb;
 
+        // Check if table exists
         $table_name = $wpdb->prefix . 'pz_flipbooks';
         $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'");
 
@@ -383,6 +272,7 @@ class PZ_Flipbooks
             }
         }
 
+        // Sanitize and prepare data
         $title = sanitize_text_field($_POST['title']);
         $description = isset($_POST['description']) ? sanitize_textarea_field($_POST['description']) : '';
         $flipbook_url = wp_kses_post(stripslashes($_POST['flipbook_url']));
@@ -426,6 +316,9 @@ class PZ_Flipbooks
         ));
     }
 
+    /**
+     * Create table if it doesn't exist
+     */
     private function create_table_if_not_exists()
     {
         global $wpdb;
@@ -450,6 +343,9 @@ class PZ_Flipbooks
         error_log('PZ Flipbooks: Attempted to create table');
     }
 
+    /**
+     * Delete flipbook
+     */
     public function delete_flipbook()
     {
         check_ajax_referer('pz_flipbooks_nonce', 'nonce');
@@ -474,6 +370,9 @@ class PZ_Flipbooks
         }
     }
 
+    /**
+     * Get all flipbooks
+     */
     public function get_all_flipbooks()
     {
         global $wpdb;
@@ -484,47 +383,28 @@ class PZ_Flipbooks
         );
     }
 
-    private function user_has_school_license($user_id)
-    {
-        if (!$user_id) {
-            return false;
-        }
-
-        global $wpdb;
-
-        $license = $wpdb->get_row($wpdb->prepare(
-            "SELECT * FROM {$wpdb->prefix}pz_school_licenses 
-            WHERE user_id = %d 
-            AND status = 'active' 
-            AND end_date > NOW()
-            LIMIT 1",
-            $user_id
-        ));
-
-        return $license ? true : false;
-    }
-
+    /**
+     * Check if user purchased a specific product (COMPLETED orders only)
+     */
     private function user_has_purchased_product($user_id, $product_id)
     {
         if (!$user_id || !$product_id) {
             return false;
         }
 
-        if ($this->user_has_school_license($user_id)) {
-            error_log('PZ Flipbooks: User ' . $user_id . ' is school administrator');
-            return true;
-        }
-
+        // Check if this is an auto-created account
         $is_auto_account = get_user_meta($user_id, 'pz_auto_account', true);
 
         if ($is_auto_account) {
+            // Check if license is still valid
             $expiry = get_user_meta($user_id, 'pz_license_expiry', true);
             if ($expiry && strtotime($expiry) > time()) {
-                return true;
+                return true; // Auto account with valid license
             }
             return false;
         }
 
+        // Regular purchase check
         $orders = wc_get_orders(array(
             'customer_id' => $user_id,
             'status' => array('completed', 'processing'),
@@ -543,6 +423,9 @@ class PZ_Flipbooks
         return false;
     }
 
+    /**
+     * Get flipbooks for user based on purchased products
+     */
     public function get_flipbooks_for_user($user_id)
     {
         if (!$user_id) {
@@ -552,6 +435,7 @@ class PZ_Flipbooks
 
         global $wpdb;
 
+        // Check table exists
         $table_name = $wpdb->prefix . 'pz_flipbooks';
         $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'");
 
@@ -560,18 +444,23 @@ class PZ_Flipbooks
             return array();
         }
 
+        // Get product IDs
         $school_product_id = get_option('pz_school_product_id');
         $student_product_id = get_option('pz_student_product_id');
 
         error_log('PZ Flipbooks: School Product ID: ' . $school_product_id);
         error_log('PZ Flipbooks: Student Product ID: ' . $student_product_id);
 
-        $has_school = $this->user_has_school_license($user_id) || $this->user_has_purchased_product($user_id, $school_product_id);
+        // Check if user purchased school license
+        $has_school = $this->user_has_purchased_product($user_id, $school_product_id);
+
+        // Check if user purchased student package
         $has_student = $this->user_has_purchased_product($user_id, $student_product_id);
 
         error_log('PZ Flipbooks: User ' . $user_id . ' - School: ' . ($has_school ? 'YES' : 'NO') . ', Student: ' . ($has_student ? 'YES' : 'NO'));
 
         if ($has_school) {
+            // School license buyers get ALL flipbooks
             $flipbooks = $wpdb->get_results(
                 "SELECT * FROM {$wpdb->prefix}pz_flipbooks 
                 WHERE status = 'active' 
@@ -582,6 +471,7 @@ class PZ_Flipbooks
         }
 
         if ($has_student) {
+            // Student package buyers only get 'all' access flipbooks
             $flipbooks = $wpdb->get_results(
                 "SELECT * FROM {$wpdb->prefix}pz_flipbooks 
                 WHERE status = 'active' AND access_type = 'all'
@@ -595,6 +485,9 @@ class PZ_Flipbooks
         return array();
     }
 
+    /**
+     * Load flipbook content (AJAX - protected)
+     */
     public function load_flipbook_content()
     {
         if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'pz_flipbooks_view_nonce')) {
@@ -637,6 +530,9 @@ class PZ_Flipbooks
         ));
     }
 
+    /**
+     * Check if user can access flipbook based on purchases
+     */
     private function user_can_access_flipbook($user_id, $flipbook_id)
     {
         global $wpdb;
@@ -653,32 +549,32 @@ class PZ_Flipbooks
         $school_product_id = get_option('pz_school_product_id');
         $student_product_id = get_option('pz_student_product_id');
 
-        $has_school = $this->user_has_school_license($user_id) || $this->user_has_purchased_product($user_id, $school_product_id);
+        $has_school = $this->user_has_purchased_product($user_id, $school_product_id);
 
         if ($has_school) {
-            return true;
+            return true; // School buyers can access everything
         }
 
         $has_student = $this->user_has_purchased_product($user_id, $student_product_id);
 
         if ($has_student && $flipbook->access_type === 'all') {
-            return true;
+            return true; // Student buyers can access 'all' flipbooks
         }
 
         return false;
     }
 
+    /**
+     * Add WooCommerce My Account endpoint
+     */
     public function add_flipbooks_endpoint()
     {
         add_rewrite_endpoint('flipbooks', EP_ROOT | EP_PAGES);
     }
 
-    // NEW: Add School Dashboard endpoint
-    public function add_school_dashboard_endpoint()
-    {
-        add_rewrite_endpoint('school-dashboard', EP_ROOT | EP_PAGES);
-    }
-
+    /**
+     * Add flipbooks tab to My Account menu (based on purchases)
+     */
     public function add_flipbooks_tab($items)
     {
         $user_id = get_current_user_id();
@@ -687,14 +583,17 @@ class PZ_Flipbooks
             return $items;
         }
 
+        // Get product IDs
         $school_product_id = get_option('pz_school_product_id');
         $student_product_id = get_option('pz_student_product_id');
 
-        $has_school = $this->user_has_school_license($user_id) || $this->user_has_purchased_product($user_id, $school_product_id);
+        // Check if user purchased either product
+        $has_school = $this->user_has_purchased_product($user_id, $school_product_id);
         $has_student = $this->user_has_purchased_product($user_id, $student_product_id);
 
         error_log('PZ Flipbooks Tab: User ' . $user_id . ' - School: ' . ($has_school ? 'YES' : 'NO') . ', Student: ' . ($has_student ? 'YES' : 'NO'));
 
+        // Show tab if user purchased either product
         if ($has_school || $has_student) {
             if (isset($items['customer-logout'])) {
                 $logout = $items['customer-logout'];
@@ -709,38 +608,17 @@ class PZ_Flipbooks
         return $items;
     }
 
-    // NEW: Add School Dashboard tab (only for school license purchasers)
-    public function add_school_dashboard_tab($items)
-    {
-        $user_id = get_current_user_id();
-
-        if (!$user_id) {
-            return $items;
-        }
-
-        // Only show for actual school license purchasers (not auto-created accounts)
-        if ($this->user_has_school_license($user_id)) {
-            if (isset($items['customer-logout'])) {
-                $logout = $items['customer-logout'];
-                unset($items['customer-logout']);
-                $items['school-dashboard'] = 'School Dashboard';
-                $items['customer-logout'] = $logout;
-            } else {
-                $items['school-dashboard'] = 'School Dashboard';
-            }
-        }
-
-        return $items;
-    }
-
+    /**
+     * Flipbooks tab content
+     */
     public function flipbooks_tab_content()
     {
         $user_id = get_current_user_id();
 
+        // Debug info for admins
         if (current_user_can('manage_options')) {
             $school_product_id = get_option('pz_school_product_id');
             $student_product_id = get_option('pz_student_product_id');
-            $has_school_license = $this->user_has_school_license($user_id);
             $has_school = $this->user_has_purchased_product($user_id, $school_product_id);
             $has_student = $this->user_has_purchased_product($user_id, $student_product_id);
 
@@ -748,7 +626,6 @@ class PZ_Flipbooks
             echo "\nUser ID: " . $user_id;
             echo "\nSchool Product ID: " . $school_product_id;
             echo "\nStudent Product ID: " . $student_product_id;
-            echo "\nIs School Administrator: " . ($has_school_license ? 'YES' : 'NO');
             echo "\nHas Purchased School: " . ($has_school ? 'YES' : 'NO');
             echo "\nHas Purchased Student: " . ($has_student ? 'YES' : 'NO');
             echo "\n-->";
@@ -762,75 +639,9 @@ class PZ_Flipbooks
 
         include PZ_LICENSE_PATH . 'templates/flipbooks-tab.php';
     }
-
-    // NEW: School Dashboard content
-    public function school_dashboard_content()
-    {
-        $user_id = get_current_user_id();
-        
-        if (!$user_id) {
-            echo '<p>Please log in to view this page.</p>';
-            return;
-        }
-
-        global $wpdb;
-        $school_license = $wpdb->get_row($wpdb->prepare(
-            "SELECT * FROM {$wpdb->prefix}pz_school_licenses 
-            WHERE user_id = %d 
-            AND status = 'active' 
-            AND end_date > NOW()
-            ORDER BY id DESC
-            LIMIT 1",
-            $user_id
-        ));
-
-        if (!$school_license) {
-            echo '<div style="background: #f8d7da; border: 1px solid #f5c6cb; padding: 30px; border-radius: 8px; text-align: center;">';
-            echo '<h3 style="color: #721c24; margin-top: 0;">No Active School License</h3>';
-            echo '<p style="color: #721c24;">You don\'t have an active school license.</p>';
-            echo '</div>';
-            return;
-        }
-
-        $days_remaining = floor((strtotime($school_license->end_date) - time()) / (60 * 60 * 24));
-
-        // Get credentials
-        $teacher_username = '';
-        $teacher_password = '';
-        $student_username = '';
-        $student_password = '';
-        
-        if ($school_license->teacher_user_id) {
-            $teacher_user = get_user_by('id', $school_license->teacher_user_id);
-            if ($teacher_user) {
-                $teacher_username = $teacher_user->user_login;
-                $teacher_password = get_user_meta($school_license->teacher_user_id, 'pz_original_password', true);
-            }
-        }
-        
-        if ($school_license->student_user_id) {
-            $student_user = get_user_by('id', $school_license->student_user_id);
-            if ($student_user) {
-                $student_username = $student_user->user_login;
-                $student_password = get_user_meta($school_license->student_user_id, 'pz_original_password', true);
-            }
-        }
-        
-        // Fallback to order meta
-        if (empty($teacher_username) || empty($teacher_password) || empty($student_username) || empty($student_password)) {
-            $order = wc_get_order($school_license->order_id);
-            if ($order) {
-                if (empty($teacher_username)) $teacher_username = $order->get_meta('_pz_teacher_username');
-                if (empty($teacher_password)) $teacher_password = $order->get_meta('_pz_teacher_password');
-                if (empty($student_username)) $student_username = $order->get_meta('_pz_student_username');
-                if (empty($student_password)) $student_password = $order->get_meta('_pz_student_password');
-            }
-        }
-
-        include PZ_LICENSE_PATH . 'templates/school-dashboard-tab.php';
-    }
 }
 
+// Initialize
 function pz_flipbooks()
 {
     return PZ_Flipbooks::get_instance();
