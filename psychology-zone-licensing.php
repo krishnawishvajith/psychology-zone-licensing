@@ -3,7 +3,7 @@
 /**
  * Plugin Name: Psychology Zone Licensing System
  * Description: Student and School licensing management system with WooCommerce integration
- * Version: 2.0.0
+ * Version: 2.0.1
  * Author: Your Name
  * Requires: WooCommerce
  */
@@ -14,7 +14,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('PZ_LICENSE_VERSION', '2.0.0');
+define('PZ_LICENSE_VERSION', '2.0.1');
 define('PZ_LICENSE_PATH', plugin_dir_path(__FILE__));
 define('PZ_LICENSE_URL', plugin_dir_url(__FILE__));
 
@@ -504,7 +504,7 @@ class PZ_License_System
                     'end_date' => $end_date,
                     'start_date' => current_time('mysql')
                 ),
-                array('%d', '%d', '%s', '%s', '%s', '%s', '%s')
+                array('%d', '%d', '%s', '%s', '%d', '%d', '%s', '%s', '%s')
             );
 
             $license_id = $wpdb->insert_id;
@@ -517,6 +517,7 @@ class PZ_License_System
             $user = new WP_User($user_id);
             $user->add_cap('manage_school_license');
 
+            // Store credentials in order meta
             $order->update_meta_data('_pz_teacher_username', $teacher_data['username']);
             $order->update_meta_data('_pz_teacher_password', $teacher_data['password']);
             $order->update_meta_data('_pz_student_username', $student_data['username']);
@@ -920,7 +921,7 @@ class PZ_License_System
     }
 
     /**
-     * Render school admin page
+     * Render school admin page - FIXED VERSION
      */
     public function render_school_admin_page()
     {
@@ -934,13 +935,48 @@ class PZ_License_System
 
         $days_remaining = floor((strtotime($school_license->end_date) - time()) / (60 * 60 * 24));
 
-        // Get auto-created accounts data
-        $teacher_user = get_user_by('id', $school_license->teacher_user_id);
-        $student_user = get_user_by('id', $school_license->student_user_id);
-
-        // Get stored passwords
-        $teacher_password = get_user_meta($school_license->teacher_user_id, 'pz_original_password', true);
-        $student_password = get_user_meta($school_license->student_user_id, 'pz_original_password', true);
+        // Get auto-created accounts data - with proper error checking and fallback
+        $teacher_username = '';
+        $teacher_password = '';
+        $student_username = '';
+        $student_password = '';
+        
+        // Try to get teacher account
+        if ($school_license->teacher_user_id) {
+            $teacher_user = get_user_by('id', $school_license->teacher_user_id);
+            if ($teacher_user) {
+                $teacher_username = $teacher_user->user_login;
+                $teacher_password = get_user_meta($school_license->teacher_user_id, 'pz_original_password', true);
+            }
+        }
+        
+        // Try to get student account
+        if ($school_license->student_user_id) {
+            $student_user = get_user_by('id', $school_license->student_user_id);
+            if ($student_user) {
+                $student_username = $student_user->user_login;
+                $student_password = get_user_meta($school_license->student_user_id, 'pz_original_password', true);
+            }
+        }
+        
+        // Fallback: Try to get credentials from order meta if not found in user meta
+        if (empty($teacher_username) || empty($teacher_password) || empty($student_username) || empty($student_password)) {
+            $order = wc_get_order($school_license->order_id);
+            if ($order) {
+                if (empty($teacher_username)) {
+                    $teacher_username = $order->get_meta('_pz_teacher_username');
+                }
+                if (empty($teacher_password)) {
+                    $teacher_password = $order->get_meta('_pz_teacher_password');
+                }
+                if (empty($student_username)) {
+                    $student_username = $order->get_meta('_pz_student_username');
+                }
+                if (empty($student_password)) {
+                    $student_password = $order->get_meta('_pz_student_password');
+                }
+            }
+        }
 
     ?>
         <style>
@@ -1095,6 +1131,13 @@ class PZ_License_System
                     <p>✓ These accounts have full access to all study materials until your license expires</p>
                 </div>
 
+                <?php if (empty($teacher_username) && empty($student_username)): ?>
+                    <div style="background: #f8d7da; border: 1px solid #f5c6cb; padding: 20px; border-radius: 6px; margin: 20px 0;">
+                        <p style="margin: 0; color: #721c24;"><strong>⚠️ Credentials Not Found</strong></p>
+                        <p style="margin: 10px 0 0; color: #721c24;">Unable to retrieve account credentials. Please contact support with your Order ID: #<?php echo $school_license->order_id; ?></p>
+                    </div>
+                <?php else: ?>
+
                 <div class="pz-tabs">
                     <button class="pz-tab-button active" onclick="switchTab('teacher')">
                         👨‍🏫 Teacher Account
@@ -1109,17 +1152,21 @@ class PZ_License_System
                     <div class="pz-account-card">
                         <h3 style="margin-top: 0; color: #4A90E2;">👨‍🏫 Teacher Account Credentials</h3>
 
+                        <?php if (!empty($teacher_username)): ?>
                         <div class="pz-credential-box">
                             <strong>Username:</strong>
-                            <code id="teacher-username"><?php echo esc_html($teacher_user->user_login); ?></code>
+                            <code id="teacher-username"><?php echo esc_html($teacher_username); ?></code>
                             <button class="pz-copy-btn" onclick="copyToClipboard('teacher-username')">📋 Copy</button>
                         </div>
+                        <?php endif; ?>
 
+                        <?php if (!empty($teacher_password)): ?>
                         <div class="pz-credential-box">
                             <strong>Password:</strong>
                             <code id="teacher-password"><?php echo esc_html($teacher_password); ?></code>
                             <button class="pz-copy-btn" onclick="copyToClipboard('teacher-password')">📋 Copy</button>
                         </div>
+                        <?php endif; ?>
 
                         <div class="pz-info-box">
                             <p><strong>📌 Instructions for Teachers:</strong></p>
@@ -1145,17 +1192,21 @@ class PZ_License_System
                     <div class="pz-account-card" style="border-left-color: #E94B3C;">
                         <h3 style="margin-top: 0; color: #E94B3C;">👨‍🎓 Student Account Credentials</h3>
 
+                        <?php if (!empty($student_username)): ?>
                         <div class="pz-credential-box">
                             <strong>Username:</strong>
-                            <code id="student-username"><?php echo esc_html($student_user->user_login); ?></code>
+                            <code id="student-username"><?php echo esc_html($student_username); ?></code>
                             <button class="pz-copy-btn" onclick="copyToClipboard('student-username')">📋 Copy</button>
                         </div>
+                        <?php endif; ?>
 
+                        <?php if (!empty($student_password)): ?>
                         <div class="pz-credential-box">
                             <strong>Password:</strong>
                             <code id="student-password"><?php echo esc_html($student_password); ?></code>
                             <button class="pz-copy-btn" onclick="copyToClipboard('student-password')">📋 Copy</button>
                         </div>
+                        <?php endif; ?>
 
                         <div class="pz-info-box">
                             <p><strong>📌 Instructions for Students:</strong></p>
@@ -1175,6 +1226,8 @@ class PZ_License_System
                         </div>
                     </div>
                 </div>
+
+                <?php endif; ?>
             </div>
         </div>
 
