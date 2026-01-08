@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Flipbook Management Class (Order-Based Access)
+ * Flipbook Management Class (Simplified - Order-Based Access Only)
  * File: includes/class-pz-flipbooks.php
  */
 
@@ -90,7 +90,7 @@ class PZ_Flipbooks
     public function render_admin_page()
     {
         $flipbooks = $this->get_all_flipbooks();
-?>
+    ?>
         <div class="wrap">
             <h1>HTML5 Flipbooks Management</h1>
 
@@ -98,6 +98,8 @@ class PZ_Flipbooks
                 <div class="pz-add-flipbook-section" style="background: white; padding: 30px; border-radius: 8px; margin: 20px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
                     <h2>Add New Flipbook</h2>
                     <form id="pz-add-flipbook-form">
+                        <?php wp_nonce_field('pz_flipbooks_nonce', 'pz_flipbooks_nonce'); ?>
+
                         <table class="form-table">
                             <tr>
                                 <th><label for="flipbook_title">Title *</label></th>
@@ -112,10 +114,10 @@ class PZ_Flipbooks
                                 </td>
                             </tr>
                             <tr>
-                                <th><label for="flipbook_url">Flipbook URL/Embed Code *</label></th>
+                                <th><label for="flipbook_url">HTML5 Flipbook URL *</label></th>
                                 <td>
-                                    <textarea id="flipbook_url" name="flipbook_url" rows="5" class="large-text" required placeholder="Paste your HTML5 flipbook URL or full embed code here"></textarea>
-                                    <p class="description">You can paste either a URL (starts with http:// or https://) or the complete HTML embed code from your flipbook service (e.g., FlipHTML5, Issuu, etc.)</p>
+                                    <textarea id="flipbook_url" name="flipbook_url" rows="4" class="large-text" required placeholder="https://example.com/flipbook-embed-code"></textarea>
+                                    <p class="description">Full URL or embed code for the HTML5 flipbook</p>
                                 </td>
                             </tr>
                             <tr>
@@ -123,18 +125,18 @@ class PZ_Flipbooks
                                 <td>
                                     <select id="access_type" name="access_type">
                                         <option value="school">School License Only</option>
-                                        <option value="all">All Licensed Users (School + Student)</option>
+                                        <option value="all">All Users (School + Student)</option>
                                     </select>
                                     <p class="description">
-                                        <strong>School License Only:</strong> Only users who purchased School License can see this.<br>
-                                        <strong>All Licensed Users:</strong> Both School License and Student Package buyers can see this.
+                                        <strong>School License Only:</strong> Only accessible by school license purchasers<br>
+                                        <strong>All Users:</strong> Accessible by both school and student package purchasers
                                     </p>
                                 </td>
                             </tr>
                             <tr>
                                 <th><label for="sort_order">Sort Order</label></th>
                                 <td>
-                                    <input type="number" id="sort_order" name="sort_order" value="0" min="0">
+                                    <input type="number" id="sort_order" name="sort_order" value="0" min="0" style="width: 100px;">
                                     <p class="description">Lower numbers appear first</p>
                                 </td>
                             </tr>
@@ -150,40 +152,31 @@ class PZ_Flipbooks
                     <h2>Existing Flipbooks</h2>
 
                     <?php if (empty($flipbooks)): ?>
-                        <p style="color: #666; font-style: italic;">No flipbooks added yet.</p>
+                        <p style="color: #666;">No flipbooks added yet.</p>
                     <?php else: ?>
                         <table class="wp-list-table widefat fixed striped">
                             <thead>
                                 <tr>
-                                    <th style="width: 50px;">ID</th>
-                                    <th>Title</th>
-                                    <th>Description</th>
-                                    <th>Access Type</th>
-                                    <th style="width: 100px;">Sort Order</th>
-                                    <th style="width: 100px;">Status</th>
-                                    <th style="width: 150px;">Actions</th>
+                                    <th style="width: 5%;">Order</th>
+                                    <th style="width: 30%;">Title</th>
+                                    <th style="width: 35%;">Description</th>
+                                    <th style="width: 15%;">Access Type</th>
+                                    <th style="width: 15%;">Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <?php foreach ($flipbooks as $flipbook): ?>
                                     <tr>
-                                        <td><?php echo esc_html($flipbook->id); ?></td>
-                                        <td><strong><?php echo esc_html($flipbook->title); ?></strong></td>
-                                        <td><?php echo esc_html(substr($flipbook->description, 0, 100)); ?></td>
-                                        <td>
-                                            <span class="dashicons dashicons-<?php echo $flipbook->access_type === 'school' ? 'building' : 'groups'; ?>"></span>
-                                            <?php echo $flipbook->access_type === 'school' ? 'School Only' : 'All Users'; ?>
-                                        </td>
                                         <td><?php echo esc_html($flipbook->sort_order); ?></td>
+                                        <td><strong><?php echo esc_html($flipbook->title); ?></strong></td>
+                                        <td><?php echo esc_html($flipbook->description); ?></td>
                                         <td>
-                                            <?php if ($flipbook->status === 'active'): ?>
-                                                <span style="color: green;">● Active</span>
-                                            <?php else: ?>
-                                                <span style="color: #999;">○ Inactive</span>
-                                            <?php endif; ?>
+                                            <span class="pz-badge pz-badge-<?php echo $flipbook->access_type; ?>">
+                                                <?php echo $flipbook->access_type === 'school' ? 'School Only' : 'All Users'; ?>
+                                            </span>
                                         </td>
                                         <td>
-                                            <button class="button button-small pz-delete-flipbook" data-id="<?php echo esc_attr($flipbook->id); ?>">Delete</button>
+                                            <button class="button button-small pz-delete-flipbook" data-id="<?php echo $flipbook->id; ?>">Delete</button>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>
@@ -193,100 +186,36 @@ class PZ_Flipbooks
                 </div>
             </div>
         </div>
-<?php
+    <?php
     }
 
     /**
-     * Enqueue admin scripts
-     */
-    public function enqueue_admin_scripts($hook)
-    {
-        if ($hook !== 'toplevel_page_pz-flipbooks') {
-            return;
-        }
-
-        wp_enqueue_script('pz-flipbooks-admin', PZ_LICENSE_URL . 'assets/js/flipbooks-admin.js', array('jquery'), PZ_LICENSE_VERSION, true);
-        wp_localize_script('pz-flipbooks-admin', 'pzFlipbooks', array(
-            'ajaxurl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('pz_flipbooks_nonce')
-        ));
-    }
-
-    /**
-     * Enqueue frontend scripts
-     */
-    public function enqueue_frontend_scripts()
-    {
-        if (is_account_page()) {
-            wp_enqueue_style('pz-flipbooks-frontend', PZ_LICENSE_URL . 'assets/css/flipbooks.css', array(), PZ_LICENSE_VERSION);
-            wp_enqueue_script('pz-flipbooks-frontend', PZ_LICENSE_URL . 'assets/js/flipbooks-frontend.js', array('jquery'), PZ_LICENSE_VERSION, true);
-            wp_localize_script('pz-flipbooks-frontend', 'pzFlipbooks', array(
-                'ajaxurl' => admin_url('admin-ajax.php'),
-                'nonce' => wp_create_nonce('pz_flipbooks_view_nonce')
-            ));
-        }
-    }
-
-    /**
-     * Save flipbook
+     * Save flipbook (AJAX)
      */
     public function save_flipbook()
     {
-        // Verify nonce
-        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'pz_flipbooks_nonce')) {
-            wp_send_json_error(array('message' => 'Security check failed'));
-            return;
-        }
+        check_ajax_referer('pz_flipbooks_nonce', 'nonce');
 
-        // Check permissions
         if (!current_user_can('manage_options')) {
-            wp_send_json_error(array('message' => 'Unauthorized - Admin access required'));
-            return;
-        }
-
-        // Validate required fields
-        if (empty($_POST['title'])) {
-            wp_send_json_error(array('message' => 'Title is required'));
-            return;
-        }
-
-        if (empty($_POST['flipbook_url'])) {
-            wp_send_json_error(array('message' => 'Flipbook URL/Embed Code is required'));
-            return;
+            wp_send_json_error(array('message' => 'Unauthorized'));
         }
 
         global $wpdb;
 
-        // Check if table exists
-        $table_name = $wpdb->prefix . 'pz_flipbooks';
-        $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'");
-
-        if ($table_exists != $table_name) {
-            $this->create_table_if_not_exists();
-            $table_exists = $wpdb->get_var("SHOW TABLES LIKE '$table_name'");
-            if ($table_exists != $table_name) {
-                wp_send_json_error(array(
-                    'message' => 'Database table does not exist. Please deactivate and reactivate the plugin.'
-                ));
-                return;
-            }
-        }
-
-        // Sanitize and prepare data
         $title = sanitize_text_field($_POST['title']);
-        $description = isset($_POST['description']) ? sanitize_textarea_field($_POST['description']) : '';
-        $flipbook_url = wp_kses_post(stripslashes($_POST['flipbook_url']));
-        $access_type = isset($_POST['access_type']) ? sanitize_text_field($_POST['access_type']) : 'school';
-        $sort_order = isset($_POST['sort_order']) ? intval($_POST['sort_order']) : 0;
+        $description = sanitize_textarea_field($_POST['description']);
+        $flipbook_url = wp_kses_post($_POST['flipbook_url']);
+        $access_type = sanitize_text_field($_POST['access_type']);
+        $sort_order = intval($_POST['sort_order']);
 
-        if (!in_array($access_type, array('school', 'all'))) {
-            $access_type = 'school';
+        if (empty($title) || empty($flipbook_url)) {
+            wp_send_json_error(array('message' => 'Title and URL are required'));
         }
 
-        error_log('PZ Flipbooks: Attempting to insert - Title: ' . $title);
+        $this->create_table_if_not_exists();
 
         $result = $wpdb->insert(
-            $table_name,
+            $wpdb->prefix . 'pz_flipbooks',
             array(
                 'title' => $title,
                 'description' => $description,
@@ -299,20 +228,15 @@ class PZ_Flipbooks
         );
 
         if ($result === false) {
-            $error_message = $wpdb->last_error;
-            error_log('PZ Flipbooks: Database insert failed - ' . $error_message);
             wp_send_json_error(array(
-                'message' => 'Database error: ' . ($error_message ? $error_message : 'Unknown error')
+                'message' => 'Database error: ' . $wpdb->last_error
             ));
             return;
         }
 
-        $insert_id = $wpdb->insert_id;
-        error_log('PZ Flipbooks: Successfully inserted ID: ' . $insert_id);
-
         wp_send_json_success(array(
             'message' => 'Flipbook added successfully',
-            'id' => $insert_id
+            'id' => $wpdb->insert_id
         ));
     }
 
@@ -326,21 +250,20 @@ class PZ_Flipbooks
         $charset_collate = $wpdb->get_charset_collate();
 
         $sql = "CREATE TABLE IF NOT EXISTS $table_name (
-        id bigint(20) NOT NULL AUTO_INCREMENT,
-        title varchar(255) NOT NULL,
-        description text,
-        flipbook_url longtext NOT NULL,
-        access_type varchar(20) DEFAULT 'school',
-        status varchar(20) DEFAULT 'active',
-        sort_order int(11) DEFAULT 0,
-        created_at datetime DEFAULT CURRENT_TIMESTAMP,
-        updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        PRIMARY KEY (id)
-    ) $charset_collate;";
+            id bigint(20) NOT NULL AUTO_INCREMENT,
+            title varchar(255) NOT NULL,
+            description text,
+            flipbook_url longtext NOT NULL,
+            access_type varchar(20) DEFAULT 'school',
+            status varchar(20) DEFAULT 'active',
+            sort_order int(11) DEFAULT 0,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP,
+            updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id)
+        ) $charset_collate;";
 
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
         dbDelta($sql);
-        error_log('PZ Flipbooks: Attempted to create table');
     }
 
     /**
@@ -384,7 +307,7 @@ class PZ_Flipbooks
     }
 
     /**
-     * Check if user purchased a specific product (COMPLETED orders only)
+     * Check if user purchased a specific product (SIMPLIFIED - No expiration check)
      */
     private function user_has_purchased_product($user_id, $product_id)
     {
@@ -392,19 +315,7 @@ class PZ_Flipbooks
             return false;
         }
 
-        // Check if this is an auto-created account
-        $is_auto_account = get_user_meta($user_id, 'pz_auto_account', true);
-
-        if ($is_auto_account) {
-            // Check if license is still valid
-            $expiry = get_user_meta($user_id, 'pz_license_expiry', true);
-            if ($expiry && strtotime($expiry) > time()) {
-                return true; // Auto account with valid license
-            }
-            return false;
-        }
-
-        // Regular purchase check
+        // Check orders for this user
         $orders = wc_get_orders(array(
             'customer_id' => $user_id,
             'status' => array('completed', 'processing'),
@@ -550,22 +461,38 @@ class PZ_Flipbooks
         $student_product_id = get_option('pz_student_product_id');
 
         $has_school = $this->user_has_purchased_product($user_id, $school_product_id);
-
-        if ($has_school) {
-            return true; // School buyers can access everything
-        }
-
         $has_student = $this->user_has_purchased_product($user_id, $student_product_id);
 
+        // School buyers can access everything
+        if ($has_school) {
+            return true;
+        }
+
+        // Student buyers can only access 'all' flipbooks
         if ($has_student && $flipbook->access_type === 'all') {
-            return true; // Student buyers can access 'all' flipbooks
+            return true;
         }
 
         return false;
     }
 
     /**
-     * Add WooCommerce My Account endpoint
+     * Add flipbooks tab to My Account
+     */
+    public function add_flipbooks_tab($items)
+    {
+        $new_items = array();
+        foreach ($items as $key => $value) {
+            $new_items[$key] = $value;
+            if ($key === 'orders') {
+                $new_items['flipbooks'] = 'Study Materials';
+            }
+        }
+        return $new_items;
+    }
+
+    /**
+     * Add flipbooks endpoint
      */
     public function add_flipbooks_endpoint()
     {
@@ -573,77 +500,54 @@ class PZ_Flipbooks
     }
 
     /**
-     * Add flipbooks tab to My Account menu (based on purchases)
-     */
-    public function add_flipbooks_tab($items)
-    {
-        $user_id = get_current_user_id();
-
-        if (!$user_id) {
-            return $items;
-        }
-
-        // Get product IDs
-        $school_product_id = get_option('pz_school_product_id');
-        $student_product_id = get_option('pz_student_product_id');
-
-        // Check if user purchased either product
-        $has_school = $this->user_has_purchased_product($user_id, $school_product_id);
-        $has_student = $this->user_has_purchased_product($user_id, $student_product_id);
-
-        error_log('PZ Flipbooks Tab: User ' . $user_id . ' - School: ' . ($has_school ? 'YES' : 'NO') . ', Student: ' . ($has_student ? 'YES' : 'NO'));
-
-        // Show tab if user purchased either product
-        if ($has_school || $has_student) {
-            if (isset($items['customer-logout'])) {
-                $logout = $items['customer-logout'];
-                unset($items['customer-logout']);
-                $items['flipbooks'] = 'Study Materials';
-                $items['customer-logout'] = $logout;
-            } else {
-                $items['flipbooks'] = 'Study Materials';
-            }
-        }
-
-        return $items;
-    }
-
-    /**
      * Flipbooks tab content
      */
     public function flipbooks_tab_content()
     {
+        if (!is_user_logged_in()) {
+            echo '<p>Please log in to view your flipbooks.</p>';
+            return;
+        }
+
         $user_id = get_current_user_id();
-
-        // Debug info for admins
-        if (current_user_can('manage_options')) {
-            $school_product_id = get_option('pz_school_product_id');
-            $student_product_id = get_option('pz_student_product_id');
-            $has_school = $this->user_has_purchased_product($user_id, $school_product_id);
-            $has_student = $this->user_has_purchased_product($user_id, $student_product_id);
-
-            echo '<!-- DEBUG INFO:';
-            echo "\nUser ID: " . $user_id;
-            echo "\nSchool Product ID: " . $school_product_id;
-            echo "\nStudent Product ID: " . $student_product_id;
-            echo "\nHas Purchased School: " . ($has_school ? 'YES' : 'NO');
-            echo "\nHas Purchased Student: " . ($has_student ? 'YES' : 'NO');
-            echo "\n-->";
-        }
-
         $flipbooks = $this->get_flipbooks_for_user($user_id);
-
-        if (current_user_can('manage_options')) {
-            echo '<!-- Flipbooks found: ' . count($flipbooks) . ' -->';
-        }
 
         include PZ_LICENSE_PATH . 'templates/flipbooks-tab.php';
     }
-}
 
-// Initialize
-function pz_flipbooks()
-{
-    return PZ_Flipbooks::get_instance();
+    /**
+     * Enqueue admin scripts
+     */
+    public function enqueue_admin_scripts($hook)
+    {
+        if ($hook !== 'toplevel_page_pz-flipbooks') {
+            return;
+        }
+
+        wp_enqueue_style('pz-flipbooks-admin', PZ_LICENSE_URL . 'assets/css/flipbooks.css', array(), PZ_LICENSE_VERSION);
+        wp_enqueue_script('pz-flipbooks-admin', PZ_LICENSE_URL . 'assets/js/flipbooks-admin.js', array('jquery'), PZ_LICENSE_VERSION, true);
+
+        wp_localize_script('pz-flipbooks-admin', 'pzFlipbooksAdmin', array(
+            'ajaxurl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('pz_flipbooks_nonce')
+        ));
+    }
+
+    /**
+     * Enqueue frontend scripts
+     */
+    public function enqueue_frontend_scripts()
+    {
+        if (!is_account_page()) {
+            return;
+        }
+
+        wp_enqueue_style('pz-flipbooks-frontend', PZ_LICENSE_URL . 'assets/css/flipbooks.css', array(), PZ_LICENSE_VERSION);
+        wp_enqueue_script('pz-flipbooks-frontend', PZ_LICENSE_URL . 'assets/js/flipbooks-frontend.js', array('jquery'), PZ_LICENSE_VERSION, true);
+
+        wp_localize_script('pz-flipbooks-frontend', 'pzFlipbooks', array(
+            'ajaxurl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('pz_flipbooks_view_nonce')
+        ));
+    }
 }
-add_action('plugins_loaded', 'pz_flipbooks');
